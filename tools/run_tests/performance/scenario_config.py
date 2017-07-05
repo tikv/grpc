@@ -941,78 +941,40 @@ class RustLanguage:
     yield _ping_pong_scenario(
         'rust_generic_async_streaming_ping_pong', rpc_type='STREAMING',
         client_type='ASYNC_CLIENT', server_type='ASYNC_GENERIC_SERVER',
-        use_generic_payload=True, client_channels=18, async_client_threads=6,
-        categories=[SMOKETEST, SCALABLE])
+        use_generic_payload=True, client_channels=18, async_client_threads=2,
+        async_server_threads=2, categories=[SMOKETEST, SCALABLE])
 
     yield _ping_pong_scenario(
         'rust_protobuf_async_streaming_ping_pong', rpc_type='STREAMING',
         client_type='ASYNC_CLIENT', server_type='ASYNC_SERVER',
-        client_channels=18, async_client_threads=6)
+        client_channels=18, async_client_threads=2, async_server_threads=2)
 
     yield _ping_pong_scenario(
         'rust_protobuf_async_unary_ping_pong', rpc_type='UNARY',
         client_type='ASYNC_CLIENT', server_type='ASYNC_SERVER',
-        client_channels=18, async_client_threads=6,
-        categories=[SMOKETEST, SCALABLE])
-
-    yield _ping_pong_scenario(
-        'rust_protobuf_sync_to_async_unary_ping_pong', rpc_type='UNARY',
-        client_type='SYNC_CLIENT', server_type='ASYNC_SERVER',
-        client_channels=18, async_client_threads=6)
+        client_channels=18, async_client_threads=2,
+        async_server_threads=2, categories=[SMOKETEST, SCALABLE])
 
     yield _ping_pong_scenario(
         'rust_protobuf_async_unary_qps_unconstrained', rpc_type='UNARY',
         client_type='ASYNC_CLIENT', server_type='ASYNC_SERVER',
         unconstrained_client='async',
-        client_channels=18, async_client_threads=6,
-        categories=[SMOKETEST,SCALABLE])
+        client_channels=18, async_client_threads=2,
+        async_server_threads=2, categories=[SMOKETEST,SCALABLE])
 
     yield _ping_pong_scenario(
         'rust_protobuf_async_streaming_qps_unconstrained', rpc_type='STREAMING',
         client_type='ASYNC_CLIENT', server_type='ASYNC_SERVER',
         unconstrained_client='async',
-        client_channels=18, async_client_threads=6,
-        categories=[SCALABLE])
-
-    yield _ping_pong_scenario(
-        'rust_to_cpp_protobuf_sync_unary_ping_pong', rpc_type='UNARY',
-        client_type='SYNC_CLIENT', server_type='SYNC_SERVER',
-        server_language='c++', client_channels=18, async_client_threads=6,
-        async_server_threads=1, categories=[SMOKETEST, SCALABLE])
-
-    yield _ping_pong_scenario(
-        'rust_to_cpp_protobuf_async_streaming_ping_pong', rpc_type='STREAMING',
-        client_type='ASYNC_CLIENT', server_type='ASYNC_SERVER',
-        server_language='c++', client_channels=18, async_client_threads=6,
-        async_server_threads=1)
-
-    yield _ping_pong_scenario(
-        'rust_to_cpp_protobuf_async_unary_qps_unconstrained', rpc_type='UNARY',
-        client_type='ASYNC_CLIENT', server_type='ASYNC_SERVER',
-        unconstrained_client='async', server_language='c++',
-        client_channels=18, async_client_threads=6,
-        categories=[SCALABLE])
-
-    yield _ping_pong_scenario(
-        'rust_to_cpp_protobuf_sync_to_async_unary_qps_unconstrained', rpc_type='UNARY',
-        client_type='SYNC_CLIENT', server_type='ASYNC_SERVER',
-        unconstrained_client='sync', server_language='c++',
-        client_channels=18, async_client_threads=6,
-        categories=[SCALABLE])
-
-    yield _ping_pong_scenario(
-        'cpp_to_rust_protobuf_async_unary_qps_unconstrained', rpc_type='UNARY',
-        client_type='ASYNC_CLIENT', server_type='ASYNC_SERVER',
-        unconstrained_client='async', client_language='c++',
-        client_channels=18, async_client_threads=6,
-        categories=[SCALABLE])
+        client_channels=18, async_client_threads=2,
+        async_server_threads=2, categories=[SCALABLE])
 
     yield _ping_pong_scenario(
         'rust_protobuf_async_unary_ping_pong_1MB', rpc_type='UNARY',
         client_type='ASYNC_CLIENT', server_type='ASYNC_SERVER',
         req_size=1024*1024, resp_size=1024*1024,
-        client_channels=18, async_client_threads=6,
-        categories=[SMOKETEST, SCALABLE])
+        client_channels=18, async_client_threads=2,
+        async_server_threads=2, categories=[SMOKETEST, SCALABLE])
 
 
   def __str__(self):
