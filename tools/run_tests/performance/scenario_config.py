@@ -107,6 +107,8 @@ def _ping_pong_scenario(name, rpc_type,
                         unconstrained_client=None,
                         client_language=None,
                         server_language=None,
+                        client_channels=1,
+                        async_client_threads=0,
                         async_server_threads=0,
                         warmup_seconds=WARMUP_SECONDS,
                         categories=DEFAULT_CATEGORIES,
@@ -125,8 +127,8 @@ def _ping_pong_scenario(name, rpc_type,
       'client_type': client_type,
       'security_params': _get_secargs(secure),
       'outstanding_rpcs_per_channel': 1,
-      'client_channels': 1,
-      'async_client_threads': 1,
+      'client_channels': client_channels,
+      'async_client_threads': max(1, async_client_threads),
       'rpc_type': rpc_type,
       'load_params': {
         'closed_loop': {}
@@ -162,11 +164,8 @@ def _ping_pong_scenario(name, rpc_type,
     scenario['num_clients'] = num_clients if num_clients is not None else 0  # use as many clients as available.
     scenario['client_config']['outstanding_rpcs_per_channel'] = deep
     scenario['client_config']['client_channels'] = wide
-    scenario['client_config']['async_client_threads'] = 0
   else:
     scenario['client_config']['outstanding_rpcs_per_channel'] = 1
-    scenario['client_config']['client_channels'] = 1
-    scenario['client_config']['async_client_threads'] = 1
 
   if messages_per_stream:
     scenario['client_config']['messages_per_stream'] = messages_per_stream
@@ -1001,6 +1000,51 @@ class RustLanguage:
         client_type='ASYNC_CLIENT', server_type='ASYNC_SERVER',
         req_size=1024*1024, resp_size=1024*1024,
         categories=[SMOKETEST, SCALABLE])
+
+    # TiKV scenarios, grpc client and server shares four polling threads.
+    yield _ping_pong_scenario(
+        'rust_generic_async_streaming_ping_pong_two_threads_for_each',
+        rpc_type='STREAMING',
+        client_type='ASYNC_CLIENT', server_type='ASYNC_GENERIC_SERVER',
+        use_generic_payload=True, client_channels=18, async_client_threads=2,
+        async_server_threads=2, categories=[SMOKETEST, SCALABLE])
+
+    yield _ping_pong_scenario(
+        'rust_protobuf_async_streaming_ping_pong_two_threads_for_each',
+        rpc_type='STREAMING',
+        client_type='ASYNC_CLIENT', server_type='ASYNC_SERVER',
+        client_channels=18, async_client_threads=2, async_server_threads=2)
+
+    yield _ping_pong_scenario(
+        'rust_protobuf_async_unary_ping_pong_two_threads_for_each',
+        rpc_type='UNARY',
+        client_type='ASYNC_CLIENT', server_type='ASYNC_SERVER',
+        client_channels=18, async_client_threads=2,
+        async_server_threads=2, categories=[SMOKETEST, SCALABLE])
+
+    yield _ping_pong_scenario(
+        'rust_protobuf_async_unary_qps_unconstrained_two_threads_for_each',
+        rpc_type='UNARY',
+        client_type='ASYNC_CLIENT', server_type='ASYNC_SERVER',
+        unconstrained_client='async',
+        client_channels=18, async_client_threads=2,
+        async_server_threads=2, categories=[SMOKETEST,SCALABLE])
+
+    yield _ping_pong_scenario(
+        'rust_protobuf_async_streaming_qps_unconstrained_two_threads_for_each',
+        rpc_type='STREAMING',
+        client_type='ASYNC_CLIENT', server_type='ASYNC_SERVER',
+        unconstrained_client='async',
+        client_channels=18, async_client_threads=2,
+        async_server_threads=2, categories=[SCALABLE])
+
+    yield _ping_pong_scenario(
+        'rust_protobuf_async_unary_ping_pong_1MB_two_threads_for_each',
+        rpc_type='UNARY',
+        client_type='ASYNC_CLIENT', server_type='ASYNC_SERVER',
+        req_size=1024*1024, resp_size=1024*1024,
+        client_channels=18, async_client_threads=2,
+        async_server_threads=2, categories=[SMOKETEST, SCALABLE])
 
 
   def __str__(self):
