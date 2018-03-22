@@ -20,9 +20,10 @@
 
 #include <grpc/support/alloc.h>
 #include <grpc/support/log.h>
-#include <grpc/support/thd.h>
 #include <grpc/support/time.h>
-#include <grpc/support/useful.h>
+
+#include "src/core/lib/gpr/thd.h"
+#include "src/core/lib/gpr/useful.h"
 #include "src/core/lib/iomgr/iomgr.h"
 #include "test/core/util/test_config.h"
 
@@ -59,8 +60,7 @@ static void shutdown_and_destroy(grpc_completion_queue* cc) {
   grpc_completion_queue_destroy(cc);
 }
 
-static void do_nothing_end_completion(grpc_exec_ctx* exec_ctx, void* arg,
-                                      grpc_cq_completion* c) {}
+static void do_nothing_end_completion(void* arg, grpc_cq_completion* c) {}
 
 struct thread_state {
   grpc_completion_queue* cc;
@@ -81,7 +81,7 @@ static void test_too_many_plucks(void) {
   gpr_thd_id thread_ids[GPR_ARRAY_SIZE(tags)];
   struct thread_state thread_states[GPR_ARRAY_SIZE(tags)];
   gpr_thd_options thread_options = gpr_thd_options_default();
-  grpc_exec_ctx exec_ctx = GRPC_EXEC_CTX_INIT;
+  grpc_core::ExecCtx exec_ctx;
   unsigned i, j;
 
   LOG_TEST("test_too_many_plucks");
@@ -96,7 +96,8 @@ static void test_too_many_plucks(void) {
     }
     thread_states[i].cc = cc;
     thread_states[i].tag = tags[i];
-    gpr_thd_new(thread_ids + i, pluck_one, thread_states + i, &thread_options);
+    gpr_thd_new(thread_ids + i, "grpc_pluck_test", pluck_one, thread_states + i,
+                &thread_options);
   }
 
   /* wait until all other threads are plucking */
@@ -108,8 +109,8 @@ static void test_too_many_plucks(void) {
 
   for (i = 0; i < GPR_ARRAY_SIZE(tags); i++) {
     GPR_ASSERT(grpc_cq_begin_op(cc, tags[i]));
-    grpc_cq_end_op(&exec_ctx, cc, tags[i], GRPC_ERROR_NONE,
-                   do_nothing_end_completion, nullptr, &completions[i]);
+    grpc_cq_end_op(cc, tags[i], GRPC_ERROR_NONE, do_nothing_end_completion,
+                   nullptr, &completions[i]);
   }
 
   for (i = 0; i < GPR_ARRAY_SIZE(tags); i++) {
@@ -117,7 +118,6 @@ static void test_too_many_plucks(void) {
   }
 
   shutdown_and_destroy(cc);
-  grpc_exec_ctx_finish(&exec_ctx);
 }
 
 #define TEST_THREAD_EVENTS 10000
@@ -137,18 +137,16 @@ gpr_timespec ten_seconds_time(void) {
   return grpc_timeout_seconds_to_deadline(10);
 }
 
-static void free_completion(grpc_exec_ctx* exec_ctx, void* arg,
-                            grpc_cq_completion* completion) {
+static void free_completion(void* arg, grpc_cq_completion* completion) {
   gpr_free(completion);
 }
 
 static void producer_thread(void* arg) {
   test_thread_options* opt = static_cast<test_thread_options*>(arg);
   int i;
-  grpc_exec_ctx exec_ctx = GRPC_EXEC_CTX_INIT;
 
   gpr_log(GPR_INFO, "producer %d started", opt->id);
-  gpr_event_set(&opt->on_started, (void*)(intptr_t)1);
+  gpr_event_set(&opt->on_started, (void*)static_cast<intptr_t>(1));
   GPR_ASSERT(gpr_event_wait(opt->phase1, ten_seconds_time()));
 
   gpr_log(GPR_INFO, "producer %d phase 1", opt->id);
@@ -157,22 +155,21 @@ static void producer_thread(void* arg) {
   }
 
   gpr_log(GPR_INFO, "producer %d phase 1 done", opt->id);
-  gpr_event_set(&opt->on_phase1_done, (void*)(intptr_t)1);
+  gpr_event_set(&opt->on_phase1_done, (void*)static_cast<intptr_t>(1));
   GPR_ASSERT(gpr_event_wait(opt->phase2, ten_seconds_time()));
 
   gpr_log(GPR_INFO, "producer %d phase 2", opt->id);
   for (i = 0; i < TEST_THREAD_EVENTS; i++) {
-    grpc_cq_end_op(&exec_ctx, opt->cc, (void*)(intptr_t)1, GRPC_ERROR_NONE,
+    grpc_core::ExecCtx exec_ctx;
+    grpc_cq_end_op(opt->cc, (void*)static_cast<intptr_t>(1), GRPC_ERROR_NONE,
                    free_completion, nullptr,
                    static_cast<grpc_cq_completion*>(
                        gpr_malloc(sizeof(grpc_cq_completion))));
     opt->events_triggered++;
-    grpc_exec_ctx_finish(&exec_ctx);
   }
 
   gpr_log(GPR_INFO, "producer %d phase 2 done", opt->id);
-  gpr_event_set(&opt->on_finished, (void*)(intptr_t)1);
-  grpc_exec_ctx_finish(&exec_ctx);
+  gpr_event_set(&opt->on_finished, (void*)static_cast<intptr_t>(1));
 }
 
 static void consumer_thread(void* arg) {
@@ -180,13 +177,13 @@ static void consumer_thread(void* arg) {
   grpc_event ev;
 
   gpr_log(GPR_INFO, "consumer %d started", opt->id);
-  gpr_event_set(&opt->on_started, (void*)(intptr_t)1);
+  gpr_event_set(&opt->on_started, (void*)static_cast<intptr_t>(1));
   GPR_ASSERT(gpr_event_wait(opt->phase1, ten_seconds_time()));
 
   gpr_log(GPR_INFO, "consumer %d phase 1", opt->id);
 
   gpr_log(GPR_INFO, "consumer %d phase 1 done", opt->id);
-  gpr_event_set(&opt->on_phase1_done, (void*)(intptr_t)1);
+  gpr_event_set(&opt->on_phase1_done, (void*)static_cast<intptr_t>(1));
   GPR_ASSERT(gpr_event_wait(opt->phase2, ten_seconds_time()));
 
   gpr_log(GPR_INFO, "consumer %d phase 2", opt->id);
@@ -200,7 +197,7 @@ static void consumer_thread(void* arg) {
         break;
       case GRPC_QUEUE_SHUTDOWN:
         gpr_log(GPR_INFO, "consumer %d phase 2 done", opt->id);
-        gpr_event_set(&opt->on_finished, (void*)(intptr_t)1);
+        gpr_event_set(&opt->on_finished, (void*)static_cast<intptr_t>(1));
         return;
       case GRPC_QUEUE_TIMEOUT:
         gpr_log(GPR_ERROR, "Invalid timeout received");
@@ -234,6 +231,7 @@ static void test_threading(size_t producers, size_t consumers) {
     options[i].cc = cc;
     options[i].id = optid++;
     GPR_ASSERT(gpr_thd_new(&id,
+                           i < producers ? "grpc_producer" : "grpc_consumer",
                            i < producers ? producer_thread : consumer_thread,
                            options + i, nullptr));
     gpr_event_wait(&options[i].on_started, ten_seconds_time());
@@ -242,7 +240,7 @@ static void test_threading(size_t producers, size_t consumers) {
   /* start phase1: producers will pre-declare all operations they will
      complete */
   gpr_log(GPR_INFO, "start phase 1");
-  gpr_event_set(&phase1, (void*)(intptr_t)1);
+  gpr_event_set(&phase1, (void*)static_cast<intptr_t>(1));
 
   gpr_log(GPR_INFO, "wait phase 1");
   for (i = 0; i < producers + consumers; i++) {
@@ -252,7 +250,7 @@ static void test_threading(size_t producers, size_t consumers) {
 
   /* start phase2: operations will complete, and consumers will consume them */
   gpr_log(GPR_INFO, "start phase 2");
-  gpr_event_set(&phase2, (void*)(intptr_t)1);
+  gpr_event_set(&phase2, (void*)static_cast<intptr_t>(1));
 
   /* in parallel, we shutdown the completion channel - all events should still
      be consumed */

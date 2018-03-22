@@ -20,9 +20,9 @@
 
 #include <grpc/support/log.h>
 #include <grpc/support/sync.h>
-#include <grpc/support/thd.h>
 #include <grpc/support/time.h>
 
+#include "src/core/lib/gpr/thd.h"
 #include "test/core/end2end/cq_verifier.h"
 
 static void* tag(intptr_t t) { return (void*)t; }
@@ -34,7 +34,7 @@ typedef struct {
 } child_events;
 
 static void child_thread(void* arg) {
-  child_events* ce = (child_events*)arg;
+  child_events* ce = static_cast<child_events*>(arg);
   grpc_event ev;
   gpr_event_set(&ce->started, (void*)1);
   gpr_log(GPR_DEBUG, "verifying");
@@ -68,7 +68,8 @@ static void test_connectivity(grpc_end2end_test_config config) {
   ce.cq = f.cq;
   gpr_event_init(&ce.started);
   gpr_thd_options_set_joinable(&thdopt);
-  GPR_ASSERT(gpr_thd_new(&thdid, child_thread, &ce, &thdopt));
+  GPR_ASSERT(
+      gpr_thd_new(&thdid, "grpc_connectivity", child_thread, &ce, &thdopt));
 
   gpr_event_wait(&ce.started, gpr_inf_future(GPR_CLOCK_MONOTONIC));
 

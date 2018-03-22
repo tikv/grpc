@@ -23,13 +23,12 @@
 #include <pthread.h>
 
 #include <grpc/support/log.h>
-#include <grpc/support/thd.h>
 #include <grpc/support/time.h>
-#include <grpc/support/useful.h>
 
+#include "src/core/lib/gpr/env.h"
+#include "src/core/lib/gpr/thd.h"
 #include "src/core/lib/iomgr/ev_posix.h"
 #include "src/core/lib/iomgr/iomgr_posix.h"
-#include "src/core/lib/support/env.h"
 
 typedef struct poll_args {
   struct pollfd* fds;
@@ -85,7 +84,7 @@ int mock_poll(struct pollfd* fds, nfds_t nfds, int timeout) {
 }
 
 void background_poll(void* args) {
-  poll_args* pargs = (poll_args*)args;
+  poll_args* pargs = static_cast<poll_args*>(args);
   pargs->result = grpc_poll_function(pargs->fds, pargs->nfds, pargs->timeout);
 }
 
@@ -138,7 +137,7 @@ void test_poll_cv_trigger(void) {
 
   opt = gpr_thd_options_default();
   gpr_thd_options_set_joinable(&opt);
-  gpr_thd_new(&t_id, &background_poll, &pargs, &opt);
+  gpr_thd_new(&t_id, "grpc_background_poll", &background_poll, &pargs, &opt);
 
   // Wakeup wakeup_fd not listening for events
   GPR_ASSERT(grpc_wakeup_fd_wakeup(&cvfd1) == GRPC_ERROR_NONE);
@@ -154,7 +153,7 @@ void test_poll_cv_trigger(void) {
   // Pollin on socket fd
   pargs.timeout = -1;
   pargs.result = -2;
-  gpr_thd_new(&t_id, &background_poll, &pargs, &opt);
+  gpr_thd_new(&t_id, "grpc_background_poll", &background_poll, &pargs, &opt);
   trigger_socket_event();
   gpr_thd_join(t_id);
   GPR_ASSERT(pargs.result == 1);
@@ -168,7 +167,7 @@ void test_poll_cv_trigger(void) {
   // Pollin on wakeup fd
   reset_socket_event();
   pargs.result = -2;
-  gpr_thd_new(&t_id, &background_poll, &pargs, &opt);
+  gpr_thd_new(&t_id, "grpc_background_poll", &background_poll, &pargs, &opt);
   GPR_ASSERT(grpc_wakeup_fd_wakeup(&cvfd2) == GRPC_ERROR_NONE);
   gpr_thd_join(t_id);
 
@@ -182,7 +181,7 @@ void test_poll_cv_trigger(void) {
 
   // Pollin on wakeupfd before poll()
   pargs.result = -2;
-  gpr_thd_new(&t_id, &background_poll, &pargs, &opt);
+  gpr_thd_new(&t_id, "grpc_background_poll", &background_poll, &pargs, &opt);
   gpr_thd_join(t_id);
 
   GPR_ASSERT(pargs.result == 1);
@@ -199,7 +198,7 @@ void test_poll_cv_trigger(void) {
   reset_socket_event();
   GPR_ASSERT(grpc_wakeup_fd_consume_wakeup(&cvfd1) == GRPC_ERROR_NONE);
   GPR_ASSERT(grpc_wakeup_fd_consume_wakeup(&cvfd2) == GRPC_ERROR_NONE);
-  gpr_thd_new(&t_id, &background_poll, &pargs, &opt);
+  gpr_thd_new(&t_id, "grpc_background_poll", &background_poll, &pargs, &opt);
   gpr_thd_join(t_id);
 
   GPR_ASSERT(pargs.result == 0);

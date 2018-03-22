@@ -27,9 +27,9 @@
 #include <grpc++/server_context.h>
 #include <grpc/grpc.h>
 #include <grpc/support/log.h>
-#include <grpc/support/thd.h>
 #include <grpc/support/time.h>
 
+#include "src/core/lib/gpr/thd.h"
 #include "src/proto/grpc/testing/duplicate/echo_duplicate.grpc.pb.h"
 #include "src/proto/grpc/testing/echo.grpc.pb.h"
 #include "src/proto/grpc/testing/echo_mock.grpc.pb.h"
@@ -43,7 +43,6 @@
 
 #include <iostream>
 
-using namespace std;
 using ::testing::AtLeast;
 using ::testing::DoAll;
 using ::testing::Invoke;
@@ -57,6 +56,7 @@ using grpc::testing::EchoResponse;
 using grpc::testing::EchoTestService;
 using grpc::testing::MockClientReaderWriter;
 using std::chrono::system_clock;
+using std::vector;
 
 namespace grpc {
 namespace testing {
