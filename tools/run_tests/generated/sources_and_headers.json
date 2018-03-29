@@ -952,6 +952,23 @@
   }, 
   {
     "deps": [
+      "gpr", 
+      "gpr_test_util", 
+      "grpc", 
+      "grpc_test_util"
+    ], 
+    "headers": [], 
+    "is_filegroup": false, 
+    "language": "c", 
+    "name": "grpc_core_alarm_test", 
+    "src": [
+      "test/core/surface/alarm_test.cc"
+    ], 
+    "third_party": false, 
+    "type": "target"
+  }, 
+  {
+    "deps": [
       "cmdline", 
       "gpr", 
       "grpc"
@@ -8580,6 +8597,7 @@
       "src/core/lib/slice/slice_hash_table.cc", 
       "src/core/lib/slice/slice_intern.cc", 
       "src/core/lib/slice/slice_string_helpers.cc", 
+      "src/core/lib/surface/alarm.cc", 
       "src/core/lib/surface/api_trace.cc", 
       "src/core/lib/surface/byte_buffer.cc", 
       "src/core/lib/surface/byte_buffer_reader.cc", 
@@ -8622,6 +8640,7 @@
       "grpc_trace_headers"
     ], 
     "headers": [
+      "include/grpc/alarm.h", 
       "include/grpc/byte_buffer.h", 
       "include/grpc/byte_buffer_reader.h", 
       "include/grpc/compression.h", 
@@ -8764,6 +8783,7 @@
     "language": "c", 
     "name": "grpc_base_headers", 
     "src": [
+      "include/grpc/alarm.h", 
       "include/grpc/byte_buffer.h", 
       "include/grpc/byte_buffer_reader.h", 
       "include/grpc/compression.h", 

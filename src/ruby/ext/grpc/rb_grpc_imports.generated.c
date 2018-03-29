@@ -22,6 +22,10 @@
 
 #include "rb_grpc_imports.generated.h"
 
+grpc_alarm_create_type grpc_alarm_create_import;
+grpc_alarm_set_type grpc_alarm_set_import;
+grpc_alarm_notify_type grpc_alarm_notify_import;
+grpc_alarm_destroy_type grpc_alarm_destroy_import;
 grpc_compression_algorithm_is_message_type grpc_compression_algorithm_is_message_import;
 grpc_compression_algorithm_is_stream_type grpc_compression_algorithm_is_stream_import;
 grpc_compression_algorithm_parse_type grpc_compression_algorithm_parse_import;
@@ -258,6 +262,10 @@ gpr_sleep_until_type gpr_sleep_until_import;
 gpr_timespec_to_micros_type gpr_timespec_to_micros_import;
 
 void grpc_rb_load_imports(HMODULE library) {
+  grpc_alarm_create_import = (grpc_alarm_create_type) GetProcAddress(library, "grpc_alarm_create");
+  grpc_alarm_set_import = (grpc_alarm_set_type) GetProcAddress(library, "grpc_alarm_set");
+  grpc_alarm_notify_import = (grpc_alarm_notify_type) GetProcAddress(library, "grpc_alarm_notify");
+  grpc_alarm_destroy_import = (grpc_alarm_destroy_type) GetProcAddress(library, "grpc_alarm_destroy");
   grpc_compression_algorithm_is_message_import = (grpc_compression_algorithm_is_message_type) GetProcAddress(library, "grpc_compression_algorithm_is_message");
   grpc_compression_algorithm_is_stream_import = (grpc_compression_algorithm_is_stream_type) GetProcAddress(library, "grpc_compression_algorithm_is_stream");
   grpc_compression_algorithm_parse_import = (grpc_compression_algorithm_parse_type) GetProcAddress(library, "grpc_compression_algorithm_parse");

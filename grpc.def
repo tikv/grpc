@@ -1,4 +1,8 @@
 EXPORTS
+    grpc_alarm_create
+    grpc_alarm_set
+    grpc_alarm_notify
+    grpc_alarm_destroy
     grpc_compression_algorithm_is_message
     grpc_compression_algorithm_is_stream
     grpc_compression_algorithm_parse

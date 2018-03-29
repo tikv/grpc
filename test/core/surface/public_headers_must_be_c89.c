@@ -16,6 +16,7 @@
  *
  */
 
+#include <grpc/alarm.h>
 #include <grpc/byte_buffer.h>
 #include <grpc/byte_buffer_reader.h>
 #include <grpc/census.h>
@@ -60,6 +61,10 @@
 #include <stdio.h>
 
 int main(int argc, char **argv) {
+  printf("%lx", (unsigned long) grpc_alarm_create);
+  printf("%lx", (unsigned long) grpc_alarm_set);
+  printf("%lx", (unsigned long) grpc_alarm_notify);
+  printf("%lx", (unsigned long) grpc_alarm_destroy);
   printf("%lx", (unsigned long) grpc_compression_algorithm_is_message);
   printf("%lx", (unsigned long) grpc_compression_algorithm_is_stream);
   printf("%lx", (unsigned long) grpc_compression_algorithm_parse);

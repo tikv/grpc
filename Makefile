@@ -1008,6 +1008,7 @@ grpc_channel_stack_builder_test: $(BINDIR)/$(CONFIG)/grpc_channel_stack_builder_
 grpc_channel_stack_test: $(BINDIR)/$(CONFIG)/grpc_channel_stack_test
 grpc_completion_queue_test: $(BINDIR)/$(CONFIG)/grpc_completion_queue_test
 grpc_completion_queue_threading_test: $(BINDIR)/$(CONFIG)/grpc_completion_queue_threading_test
+grpc_core_alarm_test: $(BINDIR)/$(CONFIG)/grpc_core_alarm_test
 grpc_create_jwt: $(BINDIR)/$(CONFIG)/grpc_create_jwt
 grpc_credentials_test: $(BINDIR)/$(CONFIG)/grpc_credentials_test
 grpc_fetch_oauth2: $(BINDIR)/$(CONFIG)/grpc_fetch_oauth2
@@ -1423,6 +1424,7 @@ buildtests_c: privatelibs_c \
   $(BINDIR)/$(CONFIG)/grpc_channel_stack_test \
   $(BINDIR)/$(CONFIG)/grpc_completion_queue_test \
   $(BINDIR)/$(CONFIG)/grpc_completion_queue_threading_test \
+  $(BINDIR)/$(CONFIG)/grpc_core_alarm_test \
   $(BINDIR)/$(CONFIG)/grpc_credentials_test \
   $(BINDIR)/$(CONFIG)/grpc_fetch_oauth2 \
   $(BINDIR)/$(CONFIG)/grpc_invalid_channel_args_test \
@@ -1910,6 +1912,8 @@ test_c: buildtests_c
 	$(Q) $(BINDIR)/$(CONFIG)/grpc_completion_queue_test || ( echo test grpc_completion_queue_test failed ; exit 1 )
 	$(E) "[RUN]     Testing grpc_completion_queue_threading_test"
 	$(Q) $(BINDIR)/$(CONFIG)/grpc_completion_queue_threading_test || ( echo test grpc_completion_queue_threading_test failed ; exit 1 )
+	$(E) "[RUN]     Testing grpc_core_alarm_test"
+	$(Q) $(BINDIR)/$(CONFIG)/grpc_core_alarm_test || ( echo test grpc_core_alarm_test failed ; exit 1 )
 	$(E) "[RUN]     Testing grpc_credentials_test"
 	$(Q) $(BINDIR)/$(CONFIG)/grpc_credentials_test || ( echo test grpc_credentials_test failed ; exit 1 )
 	$(E) "[RUN]     Testing grpc_invalid_channel_args_test"
@@ -3118,6 +3122,7 @@ LIBGRPC_SRC = \
     src/core/lib/slice/slice_hash_table.cc \
     src/core/lib/slice/slice_intern.cc \
     src/core/lib/slice/slice_string_helpers.cc \
+    src/core/lib/surface/alarm.cc \
     src/core/lib/surface/api_trace.cc \
     src/core/lib/surface/byte_buffer.cc \
     src/core/lib/surface/byte_buffer_reader.cc \
@@ -3289,6 +3294,7 @@ PUBLIC_HEADERS_C += \
     include/grpc/impl/codegen/sync_posix.h \
     include/grpc/impl/codegen/sync_windows.h \
     include/grpc/grpc_security.h \
+    include/grpc/alarm.h \
     include/grpc/byte_buffer.h \
     include/grpc/byte_buffer_reader.h \
     include/grpc/compression.h \
@@ -3460,6 +3466,7 @@ LIBGRPC_CRONET_SRC = \
     src/core/lib/slice/slice_hash_table.cc \
     src/core/lib/slice/slice_intern.cc \
     src/core/lib/slice/slice_string_helpers.cc \
+    src/core/lib/surface/alarm.cc \
     src/core/lib/surface/api_trace.cc \
     src/core/lib/surface/byte_buffer.cc \
     src/core/lib/surface/byte_buffer_reader.cc \
@@ -3787,6 +3794,7 @@ LIBGRPC_TEST_UTIL_SRC = \
     src/core/lib/slice/slice_hash_table.cc \
     src/core/lib/slice/slice_intern.cc \
     src/core/lib/slice/slice_string_helpers.cc \
+    src/core/lib/surface/alarm.cc \
     src/core/lib/surface/api_trace.cc \
     src/core/lib/surface/byte_buffer.cc \
     src/core/lib/surface/byte_buffer_reader.cc \
@@ -4067,6 +4075,7 @@ LIBGRPC_TEST_UTIL_UNSECURE_SRC = \
     src/core/lib/slice/slice_hash_table.cc \
     src/core/lib/slice/slice_intern.cc \
     src/core/lib/slice/slice_string_helpers.cc \
+    src/core/lib/surface/alarm.cc \
     src/core/lib/surface/api_trace.cc \
     src/core/lib/surface/byte_buffer.cc \
     src/core/lib/surface/byte_buffer_reader.cc \
@@ -4314,6 +4323,7 @@ LIBGRPC_UNSECURE_SRC = \
     src/core/lib/slice/slice_hash_table.cc \
     src/core/lib/slice/slice_intern.cc \
     src/core/lib/slice/slice_string_helpers.cc \
+    src/core/lib/surface/alarm.cc \
     src/core/lib/surface/api_trace.cc \
     src/core/lib/surface/byte_buffer.cc \
     src/core/lib/surface/byte_buffer_reader.cc \
@@ -4452,6 +4462,7 @@ PUBLIC_HEADERS_C += \
     include/grpc/impl/codegen/sync_generic.h \
     include/grpc/impl/codegen/sync_posix.h \
     include/grpc/impl/codegen/sync_windows.h \
+    include/grpc/alarm.h \
     include/grpc/byte_buffer.h \
     include/grpc/byte_buffer_reader.h \
     include/grpc/compression.h \
@@ -4747,6 +4758,7 @@ PUBLIC_HEADERS_CXX += \
     include/grpc/impl/codegen/sync_generic.h \
     include/grpc/impl/codegen/sync_posix.h \
     include/grpc/impl/codegen/sync_windows.h \
+    include/grpc/alarm.h \
     include/grpc/byte_buffer.h \
     include/grpc/byte_buffer_reader.h \
     include/grpc/compression.h \
@@ -5114,6 +5126,7 @@ LIBGRPC++_CRONET_SRC = \
     src/core/lib/slice/slice_hash_table.cc \
     src/core/lib/slice/slice_intern.cc \
     src/core/lib/slice/slice_string_helpers.cc \
+    src/core/lib/surface/alarm.cc \
     src/core/lib/surface/api_trace.cc \
     src/core/lib/surface/byte_buffer.cc \
     src/core/lib/surface/byte_buffer_reader.cc \
@@ -5301,6 +5314,7 @@ PUBLIC_HEADERS_CXX += \
     include/grpc/impl/codegen/sync_generic.h \
     include/grpc/impl/codegen/sync_posix.h \
     include/grpc/impl/codegen/sync_windows.h \
+    include/grpc/alarm.h \
     include/grpc/byte_buffer.h \
     include/grpc/byte_buffer_reader.h \
     include/grpc/compression.h \
@@ -6153,6 +6167,7 @@ PUBLIC_HEADERS_CXX += \
     include/grpc/impl/codegen/sync_generic.h \
     include/grpc/impl/codegen/sync_posix.h \
     include/grpc/impl/codegen/sync_windows.h \
+    include/grpc/alarm.h \
     include/grpc/byte_buffer.h \
     include/grpc/byte_buffer_reader.h \
     include/grpc/compression.h \
@@ -11399,6 +11414,38 @@ deps_grpc_completion_queue_threading_test: $(GRPC_COMPLETION_QUEUE_THREADING_TES
 ifneq ($(NO_SECURE),true)
 ifneq ($(NO_DEPS),true)
 -include $(GRPC_COMPLETION_QUEUE_THREADING_TEST_OBJS:.o=.dep)
+endif
+endif
+
+
+GRPC_CORE_ALARM_TEST_SRC = \
+    test/core/surface/alarm_test.cc \
+
+GRPC_CORE_ALARM_TEST_OBJS = $(addprefix $(OBJDIR)/$(CONFIG)/, $(addsuffix .o, $(basename $(GRPC_CORE_ALARM_TEST_SRC))))
+ifeq ($(NO_SECURE),true)
+
+# You can't build secure targets if you don't have OpenSSL.
+
+$(BINDIR)/$(CONFIG)/grpc_core_alarm_test: openssl_dep_error
+
+else
+
+
+
+$(BINDIR)/$(CONFIG)/grpc_core_alarm_test: $(GRPC_CORE_ALARM_TEST_OBJS) $(LIBDIR)/$(CONFIG)/libgrpc_test_util.a $(LIBDIR)/$(CONFIG)/libgrpc.a $(LIBDIR)/$(CONFIG)/libgpr_test_util.a $(LIBDIR)/$(CONFIG)/libgpr.a
+	$(E) "[LD]      Linking $@"
+	$(Q) mkdir -p `dirname $@`
+	$(Q) $(LD) $(LDFLAGS) $(GRPC_CORE_ALARM_TEST_OBJS) $(LIBDIR)/$(CONFIG)/libgrpc_test_util.a $(LIBDIR)/$(CONFIG)/libgrpc.a $(LIBDIR)/$(CONFIG)/libgpr_test_util.a $(LIBDIR)/$(CONFIG)/libgpr.a $(LDLIBS) $(LDLIBS_SECURE) -o $(BINDIR)/$(CONFIG)/grpc_core_alarm_test
+
+endif
+
+$(OBJDIR)/$(CONFIG)/test/core/surface/alarm_test.o:  $(LIBDIR)/$(CONFIG)/libgrpc_test_util.a $(LIBDIR)/$(CONFIG)/libgrpc.a $(LIBDIR)/$(CONFIG)/libgpr_test_util.a $(LIBDIR)/$(CONFIG)/libgpr.a
+
+deps_grpc_core_alarm_test: $(GRPC_CORE_ALARM_TEST_OBJS:.o=.dep)
+
+ifneq ($(NO_SECURE),true)
+ifneq ($(NO_DEPS),true)
+-include $(GRPC_CORE_ALARM_TEST_OBJS:.o=.dep)
 endif
 endif
 

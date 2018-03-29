@@ -36,6 +36,7 @@ framework module grpc {
   header "impl/codegen/sync.h"
   header "impl/codegen/sync_generic.h"
   header "grpc_security.h"
+  header "alarm.h"
   header "byte_buffer.h"
   header "byte_buffer_reader.h"
   header "compression.h"

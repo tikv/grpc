@@ -25,6 +25,7 @@
 
 #include <windows.h>
 
+#include <grpc/alarm.h>
 #include <grpc/compression.h>
 #include <grpc/grpc.h>
 #include <grpc/grpc_posix.h>
@@ -41,6 +42,18 @@
 #include <grpc/support/thd_id.h>
 #include <grpc/support/time.h>
 
+typedef grpc_alarm*(*grpc_alarm_create_type)(void* reserved);
+extern grpc_alarm_create_type grpc_alarm_create_import;
+#define grpc_alarm_create grpc_alarm_create_import
+typedef void(*grpc_alarm_set_type)(grpc_alarm* alarm, grpc_completion_queue* cq, void* tag, void* reserved);
+extern grpc_alarm_set_type grpc_alarm_set_import;
+#define grpc_alarm_set grpc_alarm_set_import
+typedef void(*grpc_alarm_notify_type)(grpc_alarm* alarm, void* reserved);
+extern grpc_alarm_notify_type grpc_alarm_notify_import;
+#define grpc_alarm_notify grpc_alarm_notify_import
+typedef void(*grpc_alarm_destroy_type)(grpc_alarm* alarm, void* reserved);
+extern grpc_alarm_destroy_type grpc_alarm_destroy_import;
+#define grpc_alarm_destroy grpc_alarm_destroy_import
 typedef int(*grpc_compression_algorithm_is_message_type)(grpc_compression_algorithm algorithm);
 extern grpc_compression_algorithm_is_message_type grpc_compression_algorithm_is_message_import;
 #define grpc_compression_algorithm_is_message grpc_compression_algorithm_is_message_import

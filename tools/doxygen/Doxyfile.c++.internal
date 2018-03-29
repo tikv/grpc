@@ -873,6 +873,7 @@ include/grpc++/support/string_ref.h \
 include/grpc++/support/stub_options.h \
 include/grpc++/support/sync_stream.h \
 include/grpc++/support/time.h \
+include/grpc/alarm.h \
 include/grpc/byte_buffer.h \
 include/grpc/byte_buffer_reader.h \
 include/grpc/compression.h \
