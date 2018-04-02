@@ -1238,6 +1238,7 @@ class RustLanguage:
 LANGUAGES = {
     'c++': CXXLanguage(),
     'csharp': CSharpLanguage(),
+    'rust': RustLanguage(),
     'ruby': RubyLanguage(),
     'php7': Php7Language(),
     'php7_protobuf_c': Php7Language(php7_protobuf_c=True),
