@@ -38,13 +38,6 @@ cdef extern from "grpc/byte_buffer_reader.h":
     pass
 
 
-cdef extern from "grpc/impl/codegen/exec_ctx_fwd.h":
-
-  struct grpc_exec_ctx:
-    # We don't care about the internals
-    pass
-
-
 cdef extern from "grpc/grpc.h":
 
   ctypedef struct grpc_slice:
@@ -171,7 +164,7 @@ cdef extern from "grpc/grpc.h":
 
   ctypedef struct grpc_arg_pointer_vtable:
     void *(*copy)(void *)
-    void (*destroy)(grpc_exec_ctx *, void *)
+    void (*destroy)(void *)
     int (*cmp)(void *, void *)
 
   ctypedef struct grpc_arg_value_pointer:
@@ -283,15 +276,10 @@ cdef extern from "grpc/grpc.h":
     uint8_t is_set
     grpc_compression_level level
 
-  ctypedef struct grpc_op_send_initial_metadata_maybe_stream_compression_level:
-    uint8_t is_set
-    grpc_stream_compression_level level
-
   ctypedef struct grpc_op_data_send_initial_metadata:
     size_t count
     grpc_metadata *metadata
     grpc_op_send_initial_metadata_maybe_compression_level maybe_compression_level
-    grpc_op_send_initial_metadata_maybe_stream_compression_level maybe_stream_compression_level
 
   ctypedef struct grpc_op_data_send_status_from_server:
     size_t trailing_metadata_count
@@ -571,6 +559,7 @@ cdef extern from "grpc/compression.h":
     GRPC_COMPRESS_NONE
     GRPC_COMPRESS_DEFLATE
     GRPC_COMPRESS_GZIP
+    GRPC_COMPRESS_STREAM_GZIP
     GRPC_COMPRESS_ALGORITHMS_COUNT
 
   ctypedef enum grpc_compression_level:

@@ -18,7 +18,6 @@ import unittest
 
 from grpc._cython import cygrpc
 
-_INFINITE_FUTURE = cygrpc.Timespec(float('+inf'))
 _EMPTY_FLAGS = 0
 _EMPTY_METADATA = ()
 
@@ -112,12 +111,14 @@ class ReadSomeButNotAllResponsesTest(unittest.TestCase):
 
     def testReadSomeButNotAllResponses(self):
         server_completion_queue = cygrpc.CompletionQueue()
-        server = cygrpc.Server(cygrpc.ChannelArgs([]))
+        server = cygrpc.Server([(
+            b'grpc.so_reuseport',
+            0,
+        )])
         server.register_completion_queue(server_completion_queue)
         port = server.add_http2_port(b'[::]:0')
         server.start()
-        channel = cygrpc.Channel('localhost:{}'.format(port).encode(),
-                                 cygrpc.ChannelArgs([]))
+        channel = cygrpc.Channel('localhost:{}'.format(port).encode(), set())
 
         server_shutdown_tag = 'server_shutdown_tag'
         server_driver = _ServerDriver(server_completion_queue,
@@ -136,9 +137,12 @@ class ReadSomeButNotAllResponsesTest(unittest.TestCase):
         server_send_first_message_tag = 'server_send_first_message_tag'
         server_send_second_message_tag = 'server_send_second_message_tag'
         server_complete_rpc_tag = 'server_complete_rpc_tag'
-        server_call_due = set(
-            (server_send_initial_metadata_tag, server_send_first_message_tag,
-             server_send_second_message_tag, server_complete_rpc_tag,))
+        server_call_due = set((
+            server_send_initial_metadata_tag,
+            server_send_first_message_tag,
+            server_send_second_message_tag,
+            server_complete_rpc_tag,
+        ))
         server_call_completion_queue = cygrpc.CompletionQueue()
         server_call_driver = _QueueDriver(server_call_condition,
                                           server_call_completion_queue,
@@ -152,7 +156,7 @@ class ReadSomeButNotAllResponsesTest(unittest.TestCase):
 
         client_call = channel.create_call(None, _EMPTY_FLAGS,
                                           client_completion_queue, b'/twinkies',
-                                          None, _INFINITE_FUTURE)
+                                          None, None)
         client_receive_initial_metadata_tag = 'client_receive_initial_metadata_tag'
         client_complete_rpc_tag = 'client_complete_rpc_tag'
         with client_condition:
@@ -174,12 +178,12 @@ class ReadSomeButNotAllResponsesTest(unittest.TestCase):
 
         with server_call_condition:
             server_send_initial_metadata_start_batch_result = (
-                server_rpc_event.operation_call.start_server_batch([
+                server_rpc_event.call.start_server_batch([
                     cygrpc.SendInitialMetadataOperation(_EMPTY_METADATA,
                                                         _EMPTY_FLAGS),
                 ], server_send_initial_metadata_tag))
             server_send_first_message_start_batch_result = (
-                server_rpc_event.operation_call.start_server_batch([
+                server_rpc_event.call.start_server_batch([
                     cygrpc.SendMessageOperation(b'\x07', _EMPTY_FLAGS),
                 ], server_send_first_message_tag))
         server_send_initial_metadata_event = server_call_driver.event_with_tag(
@@ -188,11 +192,11 @@ class ReadSomeButNotAllResponsesTest(unittest.TestCase):
             server_send_first_message_tag)
         with server_call_condition:
             server_send_second_message_start_batch_result = (
-                server_rpc_event.operation_call.start_server_batch([
+                server_rpc_event.call.start_server_batch([
                     cygrpc.SendMessageOperation(b'\x07', _EMPTY_FLAGS),
                 ], server_send_second_message_tag))
             server_complete_rpc_start_batch_result = (
-                server_rpc_event.operation_call.start_server_batch([
+                server_rpc_event.call.start_server_batch([
                     cygrpc.ReceiveCloseOnServerOperation(_EMPTY_FLAGS),
                     cygrpc.SendStatusFromServerOperation(
                         (), cygrpc.StatusCode.ok, b'test details',
@@ -231,9 +235,8 @@ class ReadSomeButNotAllResponsesTest(unittest.TestCase):
         self.assertEqual(cygrpc.CallError.ok, client_call_cancel_result)
         self.assertIs(server_rpc_tag, server_rpc_event.tag)
         self.assertEqual(cygrpc.CompletionType.operation_complete,
-                         server_rpc_event.type)
-        self.assertIsInstance(server_rpc_event.operation_call, cygrpc.Call)
-        self.assertEqual(0, len(server_rpc_event.batch_operations))
+                         server_rpc_event.completion_type)
+        self.assertIsInstance(server_rpc_event.call, cygrpc.Call)
 
 
 if __name__ == '__main__':
