@@ -22,25 +22,26 @@
 #include "src/core/ext/filters/client_channel/client_channel.h"
 #include "src/core/ext/filters/client_channel/lb_policy/grpclb/grpclb_channel.h"
 #include "src/core/lib/channel/channel_args.h"
+#include "src/core/lib/gpr/string.h"
 #include "src/core/lib/iomgr/sockaddr_utils.h"
-#include "src/core/lib/support/string.h"
 
 grpc_channel* grpc_lb_policy_grpclb_create_lb_channel(
-    grpc_exec_ctx* exec_ctx, const char* lb_service_target_addresses,
+    const char* lb_service_target_addresses,
     grpc_client_channel_factory* client_channel_factory,
     grpc_channel_args* args) {
   grpc_channel* lb_channel = grpc_client_channel_factory_create_channel(
-      exec_ctx, client_channel_factory, lb_service_target_addresses,
+      client_channel_factory, lb_service_target_addresses,
       GRPC_CLIENT_CHANNEL_TYPE_LOAD_BALANCING, args);
   return lb_channel;
 }
 
 grpc_channel_args* grpc_lb_policy_grpclb_build_lb_channel_args(
-    grpc_exec_ctx* exec_ctx, grpc_slice_hash_table* targets_info,
-    grpc_fake_resolver_response_generator* response_generator,
+    grpc_slice_hash_table* targets_info,
+    grpc_core::FakeResolverResponseGenerator* response_generator,
     const grpc_channel_args* args) {
   const grpc_arg to_add[] = {
-      grpc_fake_resolver_response_generator_arg(response_generator)};
+      grpc_core::FakeResolverResponseGenerator::MakeChannelArg(
+          response_generator)};
   /* We remove:
    *
    * - The channel arg for the LB policy name, since we want to use the default

@@ -24,7 +24,7 @@ grpc_fuzzer(
     name = "ssl_server_fuzzer",
     srcs = ["ssl_server_fuzzer.cc"],
     language = "C++",
-    corpus = "corpus",
+    corpus = "corpus/ssl_server_corpus",
     deps = [
         "//:gpr",
         "//:grpc",
@@ -110,6 +110,7 @@ grpc_cc_binary(
     deps = [
         "//:gpr",
         "//:grpc",
+        "//test/core/util:grpc_test_util",
     ],
 )
 
@@ -121,6 +122,7 @@ grpc_cc_binary(
         ":oauth2_utils",
         "//:gpr",
         "//:grpc",
+        "//test/core/util:grpc_test_util",
     ],
 )
 
@@ -131,5 +133,6 @@ grpc_cc_binary(
     deps = [
         "//:gpr",
         "//:grpc",
+        "//test/core/util:grpc_test_util",
     ],
 )

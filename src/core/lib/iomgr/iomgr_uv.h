@@ -21,19 +21,11 @@
 
 #include "src/core/lib/iomgr/iomgr_internal.h"
 
-#include <grpc/support/thd.h>
-
-#ifdef __cplusplus
-extern "C" {
-#endif
+#include <grpc/support/thd_id.h>
 
 /* The thread ID of the thread on which grpc was initialized. Used to verify
  * that all calls into libuv are made on that same thread */
 extern gpr_thd_id g_init_thread;
-
-#ifdef __cplusplus
-}
-#endif
 
 #ifdef GRPC_UV_THREAD_CHECK
 #define GRPC_UV_ASSERT_SAME_THREAD() \
