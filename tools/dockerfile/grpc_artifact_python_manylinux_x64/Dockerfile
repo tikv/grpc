@@ -14,23 +14,13 @@
 
 # Docker file for building gRPC manylinux Python artifacts.
 
-FROM quay.io/pypa/manylinux1_x86_64
+# TODO(mmx): revert to the official manylinux1 docker image
+# after it ships with Python 3.7
+FROM grpctesting/manylinux1_temp_py37rc1_x86_64:79891dc2ec764b62a2dd2ffd083d381efde11a5f
 
 # Update the package manager
 RUN yum update -y
-
-#############################################################
-# Update Git to allow cloning submodules with --reference arg
-RUN yum remove -y git
-RUN yum install -y curl-devel expat-devel gettext-devel openssl-devel zlib-devel gcc
-RUN cd /usr/src && \
-  curl -O -L https://kernel.org/pub/software/scm/git/git-2.0.5.tar.gz && \
-  tar xzf git-2.0.5.tar.gz
-RUN cd /usr/src/git-2.0.5 && \
-  make prefix=/usr/local/git all && \
-  make prefix=/usr/local/git install
-ENV PATH /usr/local/git/bin:$PATH
-RUN source /etc/bashrc
+RUN yum install -y curl-devel expat-devel gettext-devel linux-headers openssl-devel zlib-devel gcc
 
 ###################################
 # Install Python build requirements
@@ -39,6 +29,7 @@ RUN /opt/python/cp27-cp27mu/bin/pip install cython
 RUN /opt/python/cp34-cp34m/bin/pip install cython
 RUN /opt/python/cp35-cp35m/bin/pip install cython
 RUN /opt/python/cp36-cp36m/bin/pip install cython
+RUN /opt/python/cp37-cp37m/bin/pip install cython
 
 ####################################################
 # Install auditwheel with fix for namespace packages
