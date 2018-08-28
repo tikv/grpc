@@ -25,6 +25,7 @@
 #include <grpcpp/completion_queue.h>
 #include <grpcpp/impl/grpc_library.h>
 #include "test/cpp/microbenchmarks/helpers.h"
+#include "test/cpp/microbenchmarks/kick_cq.h"
 #include "test/cpp/util/test_config.h"
 
 #include "src/core/lib/surface/completion_queue.h"
@@ -145,6 +146,10 @@ static void BM_EmptyCore(benchmark::State& state) {
   track_counters.Finish(state);
 }
 BENCHMARK(BM_EmptyCore);
+
+BENCHMARK_TEMPLATE(BM_KickCq, InsecureCallKicker);
+
+BENCHMARK_TEMPLATE(BM_KickCq, AlarmKicker);
 
 }  // namespace testing
 }  // namespace grpc
