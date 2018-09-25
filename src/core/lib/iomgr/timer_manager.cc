@@ -98,11 +98,18 @@ void grpc_timer_manager_tick() {
 
 static void run_some_timers() {
   // if there's something to execute...
+  gpr_timespec start = gpr_now(GPR_CLOCK_MONOTONIC);
   gpr_mu_lock(&g_mu);
+  gpr_timespec lock_mu = gpr_now(GPR_CLOCK_MONOTONIC);
+  gpr_log(GPR_INFO, "gpr_mu_lock(&g_mu) takes %d",
+          gpr_time_to_millis(gpr_time_sub(lock_mu, start)));
   // remove a waiter from the pool, and start another thread if necessary
   --g_waiter_count;
   if (g_waiter_count == 0 && g_threaded) {
     start_timer_thread_and_unlock();
+    gpr_timespec spawn_thread = gpr_now(GPR_CLOCK_MONOTONIC);
+    gpr_log(GPR_INFO, "spawn timer thread takes %d",
+            gpr_time_to_millis(gpr_time_sub(spawn_thread, lock_mu)));
   } else {
     // if there's no thread waiting with a timeout, kick an existing
     // waiter so that the next deadline is not missed
