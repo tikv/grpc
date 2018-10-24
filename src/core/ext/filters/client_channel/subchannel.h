@@ -85,7 +85,9 @@ class ConnectedSubchannel : public RefCountedWithTracing<ConnectedSubchannel> {
     size_t parent_data_size;
   };
 
-  explicit ConnectedSubchannel(grpc_channel_stack* channel_stack);
+  explicit ConnectedSubchannel(grpc_channel_stack* channel_stack,
+                               channelz::SubchannelNode* channelz_subchannel,
+                               intptr_t socket_uuid);
   ~ConnectedSubchannel();
 
   grpc_channel_stack* channel_stack() { return channel_stack_; }
@@ -94,9 +96,18 @@ class ConnectedSubchannel : public RefCountedWithTracing<ConnectedSubchannel> {
                            grpc_closure* closure);
   void Ping(grpc_closure* on_initiate, grpc_closure* on_ack);
   grpc_error* CreateCall(const CallArgs& args, grpc_subchannel_call** call);
+  channelz::SubchannelNode* channelz_subchannel() {
+    return channelz_subchannel_;
+  }
+  intptr_t socket_uuid() { return socket_uuid_; }
 
  private:
   grpc_channel_stack* channel_stack_;
+  // backpointer to the channelz node in this connected subchannel's
+  // owning subchannel.
+  channelz::SubchannelNode* channelz_subchannel_;
+  // uuid of this subchannel's socket. 0 if this subchannel is not connected.
+  const intptr_t socket_uuid_;
 };
 
 }  // namespace grpc_core
@@ -118,6 +129,8 @@ void grpc_subchannel_call_unref(
 
 grpc_core::channelz::SubchannelNode* grpc_subchannel_get_channelz_node(
     grpc_subchannel* subchannel);
+
+intptr_t grpc_subchannel_get_child_socket_uuid(grpc_subchannel* subchannel);
 
 /** Returns a pointer to the parent data associated with \a subchannel_call.
     The data will be of the size specified in \a parent_data_size
@@ -144,6 +157,13 @@ grpc_subchannel_get_connected_subchannel(grpc_subchannel* c);
 /** return the subchannel index key for \a subchannel */
 const grpc_subchannel_key* grpc_subchannel_get_key(
     const grpc_subchannel* subchannel);
+
+// Resets the connection backoff of the subchannel.
+// TODO(roth): Move connection backoff out of subchannels and up into LB
+// policy code (probably by adding a SubchannelGroup between
+// SubchannelList and SubchannelData), at which point this method can
+// go away.
+void grpc_subchannel_reset_backoff(grpc_subchannel* subchannel);
 
 /** continue processing a transport op */
 void grpc_subchannel_call_process_op(grpc_subchannel_call* subchannel_call,
@@ -176,6 +196,8 @@ grpc_subchannel* grpc_subchannel_create(grpc_connector* connector,
 /// Sets \a addr from \a args.
 void grpc_get_subchannel_address_arg(const grpc_channel_args* args,
                                      grpc_resolved_address* addr);
+
+const char* grpc_subchannel_get_target(grpc_subchannel* subchannel);
 
 /// Returns the URI string for the address to connect to.
 const char* grpc_get_subchannel_address_uri_arg(const grpc_channel_args* args);
