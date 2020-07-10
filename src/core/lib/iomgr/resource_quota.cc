@@ -714,6 +714,10 @@ void grpc_resource_quota_set_max_threads(grpc_resource_quota* resource_quota,
   gpr_mu_unlock(&resource_quota->thread_count_mu);
 }
 
+size_t grpc_resource_quota_used(const grpc_resource_quota* resource_quota) {
+  return static_cast<size_t>(gpr_atm_no_barrier_load(&resource_quota->used));
+}
+
 /* Public API */
 void grpc_resource_quota_resize(grpc_resource_quota* resource_quota,
                                 size_t size) {
