@@ -99,7 +99,7 @@ def create_qpsworker_job(language,
         cmdline = ['timeout', '%s' % (worker_timeout + 30)] + cmdline
         ssh_cmd.extend([
             str(user_at_host),
-            'cd ~/performance_workspace/grpc/ && %s' % ' '.join(cmdline)
+            'cd ~/performance_workspace/grpc/ && LD_PRELOAD=/usr/local/lib/libvma.so %s' % ' '.join(cmdline)
         ])
         cmdline = ssh_cmd
 
@@ -259,7 +259,7 @@ def build_on_remote_hosts(hosts,
     # Kokoro VMs (which are local only) do not have caching, so they need more time to build
     local_build_timeout = 60 * 60
     build_jobs = []
-    for host in hosts:
+    for host in []:
         user_at_host = '%s@%s' % (_REMOTE_HOST_USERNAME, host)
         build_jobs.append(
             jobset.JobSpec(
