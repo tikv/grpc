@@ -275,7 +275,7 @@ def build_on_remote_hosts(hosts,
         # start port server locally
         build_jobs.append(
             jobset.JobSpec(
-                cmdline=['python', 'tools/run_tests/start_port_server.py'],
+                cmdline=['pypy', 'tools/run_tests/start_port_server.py'],
                 shortname='local_start_port_server',
                 timeout_seconds=2 * 60))
         # Build locally as well
