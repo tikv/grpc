@@ -16,6 +16,13 @@
  *
  */
 
+#include <mutex>
+#include <thread>
+
+#include "absl/memory/memory.h"
+#include "absl/strings/match.h"
+#include "absl/strings/str_format.h"
+
 #include <grpc/grpc.h>
 #include <grpc/support/alloc.h>
 #include <grpc/support/log.h>
@@ -23,7 +30,6 @@
 #include <grpcpp/channel.h>
 #include <grpcpp/client_context.h>
 #include <grpcpp/create_channel.h>
-#include <grpcpp/impl/codegen/status_code_enum.h>
 #include <grpcpp/resource_quota.h>
 #include <grpcpp/security/auth_metadata_processor.h>
 #include <grpcpp/security/credentials.h>
@@ -33,13 +39,6 @@
 #include <grpcpp/server_context.h>
 #include <grpcpp/support/string_ref.h>
 #include <grpcpp/test/channel_test_peer.h>
-
-#include <mutex>
-#include <thread>
-
-#include "absl/memory/memory.h"
-#include "absl/strings/match.h"
-#include "absl/strings/str_format.h"
 
 #include "src/core/ext/filters/client_channel/backup_poller.h"
 #include "src/core/lib/gpr/env.h"
@@ -1267,6 +1266,9 @@ TEST_P(End2endTest, ClientCancelsBidi) {
   EchoResponse response;
   ClientContext context;
   std::string msg("hello");
+
+  // Send server_try_cancel value in the client metadata
+  context.AddMetadata(kClientTryCancelRequest, std::to_string(1));
 
   auto stream = stub_->BidiStream(&context);
 

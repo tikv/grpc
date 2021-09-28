@@ -34,16 +34,18 @@ import socket
 import subprocess
 import sys
 import tempfile
-import traceback
 import time
-from six.moves import urllib
+import traceback
 import uuid
+
 import six
+from six.moves import urllib
 
 import python_utils.jobset as jobset
 import python_utils.report_utils as report_utils
-import python_utils.watch_dirs as watch_dirs
 import python_utils.start_port_server as start_port_server
+import python_utils.watch_dirs as watch_dirs
+
 try:
     from python_utils.upload_test_results import upload_results_to_bq
 except (ImportError):
@@ -271,23 +273,6 @@ class CLanguage(object):
                 # see https://github.com/grpc/grpc/blob/b5b8578b3f8b4a9ce61ed6677e19d546e43c5c68/tools/run_tests/artifacts/artifact_targets.py#L253
                 self._cmake_configure_extra_args.append('-DOPENSSL_NO_ASM=ON')
 
-        if args.iomgr_platform == "uv":
-            cflags = '-DGRPC_UV -DGRPC_CUSTOM_IOMGR_THREAD_CHECK -DGRPC_CUSTOM_SOCKET '
-            try:
-                cflags += subprocess.check_output(
-                    ['pkg-config', '--cflags', 'libuv']).strip() + ' '
-            except (subprocess.CalledProcessError, OSError):
-                pass
-            try:
-                ldflags = subprocess.check_output(
-                    ['pkg-config', '--libs', 'libuv']).strip() + ' '
-            except (subprocess.CalledProcessError, OSError):
-                ldflags = '-luv '
-            self._make_options += [
-                'EXTRA_CPPFLAGS={}'.format(cflags),
-                'EXTRA_LDLIBS={}'.format(ldflags)
-            ]
-
     def test_specs(self):
         out = []
         binaries = get_c_tests(self.args.travis, self.test_lang)
@@ -299,8 +284,6 @@ class CLanguage(object):
             polling_strategies = (_POLLING_STRATEGIES.get(
                 self.platform, ['all']) if target.get('uses_polling', True) else
                                   ['none'])
-            if self.args.iomgr_platform == 'uv':
-                polling_strategies = ['all']
             for polling_strategy in polling_strategies:
                 env = {
                     'GRPC_DEFAULT_SSL_ROOTS_FILE_PATH':
@@ -485,6 +468,10 @@ class CLanguage(object):
             return ('ubuntu1804', [])
         elif compiler == 'gcc8.3':
             return ('buster', [])
+        elif compiler == 'gcc8.3_openssl102':
+            return ('buster_openssl102', [
+                "-DgRPC_SSL_PROVIDER=package",
+            ])
         elif compiler == 'gcc_musl':
             return ('alpine', [])
         elif compiler == 'clang4.0':
@@ -622,13 +609,16 @@ class PythonConfig(
 class PythonLanguage(object):
 
     _TEST_SPECS_FILE = {
-        'native': 'src/python/grpcio_tests/tests/tests.json',
-        'gevent': 'src/python/grpcio_tests/tests/tests.json',
-        'asyncio': 'src/python/grpcio_tests/tests_aio/tests.json',
+        'native': ['src/python/grpcio_tests/tests/tests.json'],
+        'gevent': [
+            'src/python/grpcio_tests/tests/tests.json',
+            'src/python/grpcio_tests/tests_gevent/tests.json',
+        ],
+        'asyncio': ['src/python/grpcio_tests/tests_aio/tests.json'],
     }
     _TEST_FOLDER = {
         'native': 'test',
-        'gevent': 'test',
+        'gevent': 'test_gevent',
         'asyncio': 'test_aio',
     }
 
@@ -639,9 +629,11 @@ class PythonLanguage(object):
 
     def test_specs(self):
         # load list of known test suites
-        with open(self._TEST_SPECS_FILE[
-                self.args.iomgr_platform]) as tests_json_file:
-            tests_json = json.load(tests_json_file)
+        tests_json = []
+        for tests_json_file_name in self._TEST_SPECS_FILE[
+                self.args.iomgr_platform]:
+            with open(tests_json_file_name) as tests_json_file:
+                tests_json.extend(json.load(tests_json_file))
         environment = dict(_FORCE_ENVIRON_FOR_WRAPPERS)
         # TODO(https://github.com/grpc/grpc/issues/21401) Fork handlers is not
         # designed for non-native IO manager. It has a side-effect that
@@ -766,6 +758,11 @@ class PythonLanguage(object):
                                                    minor='8',
                                                    bits=bits,
                                                    config_vars=config_vars)
+        python39_config = _python_config_generator(name='py39',
+                                                   major='3',
+                                                   minor='9',
+                                                   bits=bits,
+                                                   config_vars=config_vars)
         pypy27_config = _pypy_config_generator(name='pypy',
                                                major='2',
                                                config_vars=config_vars)
@@ -773,7 +770,7 @@ class PythonLanguage(object):
                                                major='3',
                                                config_vars=config_vars)
 
-        if args.iomgr_platform == 'asyncio':
+        if args.iomgr_platform in ('asyncio', 'gevent'):
             if args.compiler not in ('default', 'python3.6', 'python3.7',
                                      'python3.8'):
                 raise Exception(
@@ -789,19 +786,15 @@ class PythonLanguage(object):
                 else:
                     return (python38_config,)
             else:
-                if args.iomgr_platform == 'asyncio':
+                if args.iomgr_platform in ('asyncio', 'gevent'):
                     return (python36_config, python38_config)
                 elif os.uname()[0] == 'Darwin':
                     # NOTE(rbellevi): Testing takes significantly longer on
                     # MacOS, so we restrict the number of interpreter versions
                     # tested.
-                    return (
-                        python27_config,
-                        python38_config,
-                    )
+                    return (python38_config,)
                 else:
                     return (
-                        python27_config,
                         python35_config,
                         python37_config,
                         python38_config,
@@ -816,6 +809,8 @@ class PythonLanguage(object):
             return (python37_config,)
         elif args.compiler == 'python3.8':
             return (python38_config,)
+        elif args.compiler == 'python3.9':
+            return (python39_config,)
         elif args.compiler == 'pypy':
             return (pypy27_config,)
         elif args.compiler == 'pypy3':
@@ -917,7 +912,7 @@ class CSharpLanguage(object):
             self._cmake_arch_option = 'x64'
         else:
             _check_compiler(self.args.compiler, ['default', 'coreclr'])
-            self._docker_distro = 'stretch'
+            self._docker_distro = 'buster'
 
     def test_specs(self):
         with open('src/csharp/tests.json') as f:
@@ -1424,6 +1419,7 @@ argp.add_argument(
         'gcc5.3',
         'gcc7.4',
         'gcc8.3',
+        'gcc8.3_openssl102',
         'gcc_musl',
         'clang4.0',
         'clang5.0',
@@ -1449,7 +1445,7 @@ argp.add_argument(
     'Selects compiler to use. Allowed values depend on the platform and language.'
 )
 argp.add_argument('--iomgr_platform',
-                  choices=['native', 'uv', 'gevent', 'asyncio'],
+                  choices=['native', 'gevent', 'asyncio'],
                   default='native',
                   help='Selects iomgr platform to build on')
 argp.add_argument('--build_only',

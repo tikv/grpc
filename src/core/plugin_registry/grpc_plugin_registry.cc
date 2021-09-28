@@ -20,6 +20,8 @@
 
 #include <grpc/grpc.h>
 
+#include "src/core/lib/config/core_configuration.h"
+
 void grpc_http_filters_init(void);
 void grpc_http_filters_shutdown(void);
 void grpc_chttp2_plugin_init(void);
@@ -63,6 +65,8 @@ void grpc_workaround_cronet_compression_filter_shutdown(void);
 namespace grpc_core {
 void FaultInjectionFilterInit(void);
 void FaultInjectionFilterShutdown(void);
+void GrpcLbPolicyRingHashInit(void);
+void GrpcLbPolicyRingHashShutdown(void);
 }  // namespace grpc_core
 
 #ifndef GRPC_NO_XDS
@@ -115,6 +119,8 @@ void grpc_register_built_in_plugins(void) {
                        grpc_lb_policy_pick_first_shutdown);
   grpc_register_plugin(grpc_lb_policy_round_robin_init,
                        grpc_lb_policy_round_robin_shutdown);
+  grpc_register_plugin(grpc_core::GrpcLbPolicyRingHashInit,
+                       grpc_core::GrpcLbPolicyRingHashShutdown);
   grpc_register_plugin(grpc_resolver_dns_ares_init,
                        grpc_resolver_dns_ares_shutdown);
   grpc_register_plugin(grpc_resolver_dns_native_init,
@@ -156,3 +162,15 @@ void grpc_register_built_in_plugins(void) {
                        grpc_core::GoogleCloud2ProdResolverShutdown);
 #endif
 }
+
+namespace grpc_core {
+
+extern void BuildClientChannelConfiguration(CoreConfiguration::Builder* builder);
+extern void SecurityRegisterHandshakerFactories(CoreConfiguration::Builder* builder);
+
+void BuildCoreConfiguration(CoreConfiguration::Builder* builder) {
+  BuildClientChannelConfiguration(builder);
+  SecurityRegisterHandshakerFactories(builder);
+}
+
+}  // namespace grpc_core
