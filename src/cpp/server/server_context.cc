@@ -16,9 +16,8 @@
  *
  */
 
-#include <grpcpp/impl/codegen/server_context.h>
-
 #include <algorithm>
+#include <atomic>
 #include <utility>
 
 #include <grpc/compression.h>
@@ -28,6 +27,7 @@
 #include <grpc/support/log.h>
 #include <grpcpp/impl/call.h>
 #include <grpcpp/impl/codegen/completion_queue.h>
+#include <grpcpp/impl/codegen/server_context.h>
 #include <grpcpp/impl/grpc_library.h>
 #include <grpcpp/support/server_callback.h>
 #include <grpcpp/support/time.h>
@@ -324,10 +324,17 @@ void ServerContextBase::TryCancel() const {
   }
 }
 
+void ServerContextBase::MaybeMarkCancelledOnRead() {
+  if (grpc_call_failed_before_recv_message(call_.call)) {
+    marked_cancelled_.store(true, std::memory_order_release);
+  }
+}
+
 bool ServerContextBase::IsCancelled() const {
   if (completion_tag_) {
     // When using callback API, this result is always valid.
-    return completion_op_->CheckCancelledAsync();
+    return marked_cancelled_.load(std::memory_order_acquire) ||
+           completion_op_->CheckCancelledAsync();
   } else if (has_notify_when_done_tag_) {
     // When using async API, the result is only valid
     // if the tag has already been delivered at the completion queue

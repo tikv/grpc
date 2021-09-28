@@ -15,13 +15,12 @@
  *
  */
 
-#include <grpcpp/completion_queue.h>
-
 #include <memory>
 
 #include <grpc/grpc.h>
 #include <grpc/support/cpu.h>
 #include <grpc/support/log.h>
+#include <grpcpp/completion_queue.h>
 #include <grpcpp/impl/grpc_library.h>
 #include <grpcpp/support/time.h>
 
@@ -89,8 +88,7 @@ struct CallbackAlternativeCQ {
                 // hold any application locks before executing the callback,
                 // and cannot be entered recursively.
                 auto* functor =
-                    static_cast<grpc_experimental_completion_queue_functor*>(
-                        ev.tag);
+                    static_cast<grpc_completion_queue_functor*>(ev.tag);
                 functor->functor_run(functor, ev.success);
               }
             },

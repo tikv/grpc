@@ -18,8 +18,6 @@
 
 #include <grpc/support/port_platform.h>
 
-#include "src/core/lib/channel/channel_stack.h"
-
 #include <inttypes.h>
 #include <stdarg.h>
 #include <stdio.h>
@@ -33,6 +31,8 @@
 
 #include <grpc/support/alloc.h>
 #include <grpc/support/string_util.h>
+
+#include "src/core/lib/channel/channel_stack.h"
 #include "src/core/lib/gpr/string.h"
 #include "src/core/lib/slice/slice_string_helpers.h"
 #include "src/core/lib/transport/connectivity_state.h"
@@ -135,7 +135,7 @@ std::string grpc_transport_op_string(grpc_transport_op* op) {
         " DISCONNECT:", grpc_error_std_string(op->disconnect_with_error)));
   }
 
-  if (op->goaway_error) {
+  if (op->goaway_error != GRPC_ERROR_NONE) {
     out.push_back(absl::StrCat(" SEND_GOAWAY:%s",
                                grpc_error_std_string(op->goaway_error)));
   }

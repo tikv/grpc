@@ -16,11 +16,11 @@
  *
  */
 
-#include <grpcpp/support/channel_arguments.h>
+#include <gtest/gtest.h>
 
 #include <grpc/grpc.h>
 #include <grpcpp/grpcpp.h>
-#include <gtest/gtest.h>
+#include <grpcpp/support/channel_arguments.h>
 
 #include "src/core/lib/gpr/useful.h"
 #include "src/core/lib/iomgr/exec_ctx.h"
@@ -62,7 +62,8 @@ void test_mutator_destroy(grpc_socket_mutator* mutator) {
 }
 
 grpc_socket_mutator_vtable test_mutator_vtable = {
-    test_mutator_mutate_fd, test_mutator_compare, test_mutator_destroy};
+    test_mutator_mutate_fd, test_mutator_compare, test_mutator_destroy,
+    nullptr};
 
 //
 // TestSocketMutator implementation

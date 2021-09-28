@@ -22,6 +22,7 @@
 
 #include <stdbool.h>
 #include <string.h>
+
 #include <limits>
 
 #include <grpc/slice_buffer.h>
@@ -31,7 +32,7 @@
 #include "src/core/lib/channel/channel_args.h"
 #include "src/core/lib/channel/channelz.h"
 #include "src/core/lib/channel/handshaker.h"
-#include "src/core/lib/channel/handshaker_registry.h"
+#include "src/core/lib/config/core_configuration.h"
 #include "src/core/lib/gprpp/ref_counted_ptr.h"
 #include "src/core/lib/security/context/security_context.h"
 #include "src/core/lib/security/transport/secure_endpoint.h"
@@ -521,10 +522,18 @@ class FailHandshaker : public Handshaker {
   void Shutdown(grpc_error_handle why) override { GRPC_ERROR_UNREF(why); }
   void DoHandshake(grpc_tcp_server_acceptor* /*acceptor*/,
                    grpc_closure* on_handshake_done,
-                   HandshakerArgs* /*args*/) override {
-    ExecCtx::Run(DEBUG_LOCATION, on_handshake_done,
-                 GRPC_ERROR_CREATE_FROM_STATIC_STRING(
-                     "Failed to create security handshaker"));
+                   HandshakerArgs* args) override {
+    grpc_error_handle error = GRPC_ERROR_CREATE_FROM_STATIC_STRING(
+        "Failed to create security handshaker");
+    grpc_endpoint_shutdown(args->endpoint, GRPC_ERROR_REF(error));
+    grpc_endpoint_destroy(args->endpoint);
+    args->endpoint = nullptr;
+    grpc_channel_args_destroy(args->args);
+    args->args = nullptr;
+    grpc_slice_buffer_destroy_internal(args->read_buffer);
+    gpr_free(args->read_buffer);
+    args->read_buffer = nullptr;
+    ExecCtx::Run(DEBUG_LOCATION, on_handshake_done, error);
   }
 
  private:
@@ -585,11 +594,11 @@ RefCountedPtr<Handshaker> SecurityHandshakerCreate(
   }
 }
 
-void SecurityRegisterHandshakerFactories() {
-  HandshakerRegistry::RegisterHandshakerFactory(
+void SecurityRegisterHandshakerFactories(CoreConfiguration::Builder* builder) {
+  builder->handshaker_registry()->RegisterHandshakerFactory(
       false /* at_start */, HANDSHAKER_CLIENT,
       absl::make_unique<ClientSecurityHandshakerFactory>());
-  HandshakerRegistry::RegisterHandshakerFactory(
+  builder->handshaker_registry()->RegisterHandshakerFactory(
       false /* at_start */, HANDSHAKER_SERVER,
       absl::make_unique<ServerSecurityHandshakerFactory>());
 }
