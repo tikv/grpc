@@ -18,12 +18,12 @@
 
 #include <random>
 
-#include "src/core/ext/filters/client_channel/resolver_registry.h"
 #include "src/core/ext/xds/xds_client.h"
 #include "src/core/lib/gpr/env.h"
 #include "src/core/lib/gpr/string.h"
 #include "src/core/lib/http/httpcli.h"
 #include "src/core/lib/iomgr/polling_entity.h"
+#include "src/core/lib/resolver/resolver_registry.h"
 #include "src/core/lib/security/credentials/alts/check_gcp_environment.h"
 
 namespace grpc_core {
@@ -61,7 +61,6 @@ class GoogleCloud2ProdResolver : public Resolver {
                         grpc_error_handle error) = 0;
 
     RefCountedPtr<GoogleCloud2ProdResolver> resolver_;
-    grpc_httpcli_context context_;
     grpc_httpcli_response response_;
     grpc_closure on_done_;
     std::atomic<bool> on_done_called_{false};
@@ -115,7 +114,6 @@ GoogleCloud2ProdResolver::MetadataQuery::MetadataQuery(
     RefCountedPtr<GoogleCloud2ProdResolver> resolver, const char* path,
     grpc_polling_entity* pollent)
     : resolver_(std::move(resolver)) {
-  grpc_httpcli_context_init(&context_);
   // Start HTTP request.
   GRPC_CLOSURE_INIT(&on_done_, OnHttpRequestDone, this, nullptr);
   Ref().release();  // Ref held by callback.
@@ -127,15 +125,13 @@ GoogleCloud2ProdResolver::MetadataQuery::MetadataQuery(
   request.http.path = const_cast<char*>(path);
   request.http.hdr_count = 1;
   request.http.hdrs = &header;
-  grpc_resource_quota* resource_quota =
-      grpc_resource_quota_create("c2p_resolver");
-  grpc_httpcli_get(&context_, pollent, resource_quota, &request,
+  // TODO(ctiller): share the quota from whomever instantiates this!
+  grpc_httpcli_get(pollent, ResourceQuota::Default(), &request,
                    ExecCtx::Get()->Now() + 10000,  // 10s timeout
                    &on_done_, &response_);
 }
 
 GoogleCloud2ProdResolver::MetadataQuery::~MetadataQuery() {
-  grpc_httpcli_context_destroy(&context_);
   grpc_http_response_destroy(&response_);
 }
 
@@ -363,20 +359,15 @@ class GoogleCloud2ProdResolverFactory : public ResolverFactory {
     return MakeOrphanable<GoogleCloud2ProdResolver>(std::move(args));
   }
 
-  const char* scheme() const override { return "google-c2p"; }
+  // TODO(roth): Remove experimental suffix once this code is proven stable.
+  const char* scheme() const override { return "google-c2p-experimental"; }
 };
 
 }  // namespace
 
 void GoogleCloud2ProdResolverInit() {
-  // TODO(roth): Remove env var protection once this code is proven stable.
-  UniquePtr<char> value(gpr_getenv("GRPC_EXPERIMENTAL_GOOGLE_C2P_RESOLVER"));
-  bool parsed_value;
-  bool parse_succeeded = gpr_parse_bool_value(value.get(), &parsed_value);
-  if (parse_succeeded && parsed_value) {
-    ResolverRegistry::Builder::RegisterResolverFactory(
-        absl::make_unique<GoogleCloud2ProdResolverFactory>());
-  }
+  ResolverRegistry::Builder::RegisterResolverFactory(
+      absl::make_unique<GoogleCloud2ProdResolverFactory>());
 }
 
 void GoogleCloud2ProdResolverShutdown() {}

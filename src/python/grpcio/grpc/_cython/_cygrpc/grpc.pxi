@@ -236,6 +236,7 @@ cdef extern from "grpc/grpc.h":
     int version
     grpc_cq_completion_type cq_completion_type
     grpc_cq_polling_type cq_polling_type
+    void* cq_shutdown_cb
 
   ctypedef enum grpc_connectivity_state:
     GRPC_CHANNEL_IDLE
@@ -702,4 +703,5 @@ cdef extern from "grpc/grpc_security_constants.h":
 
 
 cdef extern from "src/core/lib/iomgr/error.h":
-  const grpc_error* GRPC_ERROR_CANCELLED
+  ctypedef grpc_error* grpc_error_handle
+  grpc_error_handle GRPC_ERROR_CANCELLED

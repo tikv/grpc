@@ -162,6 +162,7 @@ class PriorityLb : public LoadBalancingPolicy {
                        const absl::Status& status,
                        std::unique_ptr<SubchannelPicker> picker) override;
       void RequestReresolution() override;
+      absl::string_view GetAuthority() override;
       void AddTraceEvent(TraceSeverity severity,
                          absl::string_view message) override;
 
@@ -223,7 +224,7 @@ class PriorityLb : public LoadBalancingPolicy {
   // Current channel args and config from the resolver.
   const grpc_channel_args* args_ = nullptr;
   RefCountedPtr<PriorityLbConfig> config_;
-  HierarchicalAddressMap addresses_;
+  absl::StatusOr<HierarchicalAddressMap> addresses_;
 
   // Internal state.
   bool shutting_down_ = false;
@@ -556,7 +557,11 @@ void PriorityLb::ChildPriority::UpdateLocked(
   // Construct update args.
   UpdateArgs update_args;
   update_args.config = std::move(config);
-  update_args.addresses = priority_policy_->addresses_[name_];
+  if (priority_policy_->addresses_.ok()) {
+    update_args.addresses = (*priority_policy_->addresses_)[name_];
+  } else {
+    update_args.addresses = priority_policy_->addresses_.status();
+  }
   update_args.args = grpc_channel_args_copy(priority_policy_->args_);
   // Update the policy.
   if (GRPC_TRACE_FLAG_ENABLED(grpc_lb_priority_trace)) {
@@ -656,7 +661,7 @@ void PriorityLb::ChildPriority::MaybeCancelFailoverTimerLocked() {
 void PriorityLb::ChildPriority::OnFailoverTimer(void* arg,
                                                 grpc_error_handle error) {
   ChildPriority* self = static_cast<ChildPriority*>(arg);
-  GRPC_ERROR_REF(error);  // ref owned by lambda
+  (void)GRPC_ERROR_REF(error);  // ref owned by lambda
   self->priority_policy_->work_serializer()->Run(
       [self, error]() { self->OnFailoverTimerLocked(error); }, DEBUG_LOCATION);
 }
@@ -713,7 +718,7 @@ void PriorityLb::ChildPriority::MaybeReactivateLocked() {
 void PriorityLb::ChildPriority::OnDeactivationTimer(void* arg,
                                                     grpc_error_handle error) {
   ChildPriority* self = static_cast<ChildPriority*>(arg);
-  GRPC_ERROR_REF(error);  // ref owned by lambda
+  (void)GRPC_ERROR_REF(error);  // ref owned by lambda
   self->priority_policy_->work_serializer()->Run(
       [self, error]() { self->OnDeactivationTimerLocked(error); },
       DEBUG_LOCATION);
@@ -740,14 +745,6 @@ void PriorityLb::ChildPriority::OnDeactivationTimerLocked(
 // PriorityLb::ChildPriority::Helper
 //
 
-void PriorityLb::ChildPriority::Helper::RequestReresolution() {
-  if (priority_->priority_policy_->shutting_down_) return;
-  if (priority_->ignore_reresolution_requests_) {
-    return;
-  }
-  priority_->priority_policy_->channel_control_helper()->RequestReresolution();
-}
-
 RefCountedPtr<SubchannelInterface>
 PriorityLb::ChildPriority::Helper::CreateSubchannel(
     ServerAddress address, const grpc_channel_args& args) {
@@ -762,6 +759,18 @@ void PriorityLb::ChildPriority::Helper::UpdateState(
   if (priority_->priority_policy_->shutting_down_) return;
   // Notify the priority.
   priority_->OnConnectivityStateUpdateLocked(state, status, std::move(picker));
+}
+
+void PriorityLb::ChildPriority::Helper::RequestReresolution() {
+  if (priority_->priority_policy_->shutting_down_) return;
+  if (priority_->ignore_reresolution_requests_) {
+    return;
+  }
+  priority_->priority_policy_->channel_control_helper()->RequestReresolution();
+}
+
+absl::string_view PriorityLb::ChildPriority::Helper::GetAuthority() {
+  return priority_->priority_policy_->channel_control_helper()->GetAuthority();
 }
 
 void PriorityLb::ChildPriority::Helper::AddTraceEvent(

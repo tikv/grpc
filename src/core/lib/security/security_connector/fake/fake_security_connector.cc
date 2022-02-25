@@ -92,12 +92,12 @@ class grpc_fake_channel_security_connector final
     c = strcmp(target_, other->target_);
     if (c != 0) return c;
     if (expected_targets_ == nullptr || other->expected_targets_ == nullptr) {
-      c = GPR_ICMP(expected_targets_, other->expected_targets_);
+      c = grpc_core::QsortCompare(expected_targets_, other->expected_targets_);
     } else {
       c = strcmp(expected_targets_, other->expected_targets_);
     }
     if (c != 0) return c;
-    return GPR_ICMP(is_lb_channel_, other->is_lb_channel_);
+    return grpc_core::QsortCompare(is_lb_channel_, other->is_lb_channel_);
   }
 
   void add_handshakers(const grpc_channel_args* args,
@@ -214,10 +214,9 @@ class grpc_fake_channel_security_connector final
   char* target_name_override_;
 };
 
-static void fake_check_peer(
-    grpc_security_connector* /*sc*/, tsi_peer peer,
-    grpc_core::RefCountedPtr<grpc_auth_context>* auth_context,
-    grpc_closure* on_peer_checked) {
+void fake_check_peer(grpc_security_connector* /*sc*/, tsi_peer peer,
+                     grpc_core::RefCountedPtr<grpc_auth_context>* auth_context,
+                     grpc_closure* on_peer_checked) {
   const char* prop_name;
   grpc_error_handle error = GRPC_ERROR_NONE;
   *auth_context = nullptr;

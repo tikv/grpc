@@ -41,16 +41,16 @@ RUN apt-get update && apt-get -y install \
 # Python dependencies
 
 # Install dependencies
+# TODO(jtattermusch): This installs python3.5. Is it even needed
+# when we install python3.6 in the next step?
 RUN apt-get update && apt-get install -y \
-    python-all-dev \
-    python3-all-dev \
-    python-setuptools
+    python3-all-dev
 
 #=================
 # Compile CPython 3.6.9 from source
 
-RUN apt-get update && apt-get install -y zlib1g-dev libssl-dev
-RUN apt-get update && apt-get install -y jq build-essential libffi-dev
+RUN apt-get update && apt-get install -y zlib1g-dev libssl-dev && apt-get clean
+RUN apt-get update && apt-get install -y jq build-essential libffi-dev && apt-get clean
 
 RUN cd /tmp && \
     wget -q https://www.python.org/ftp/python/3.6.9/Python-3.6.9.tgz && \
@@ -71,7 +71,7 @@ RUN python3.6 -m ensurepip && \
 # Bazel installation
 
 # Must be in sync with tools/bazel
-ENV BAZEL_VERSION 3.7.1
+ENV BAZEL_VERSION 4.2.1
 
 # The correct bazel version is already preinstalled, no need to use //tools/bazel wrapper.
 ENV DISABLE_BAZEL_WRAPPER 1

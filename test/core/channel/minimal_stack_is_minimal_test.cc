@@ -40,6 +40,7 @@
 #include <grpc/support/string_util.h>
 
 #include "src/core/lib/channel/channel_stack_builder.h"
+#include "src/core/lib/config/core_configuration.h"
 #include "src/core/lib/gpr/string.h"
 #include "src/core/lib/surface/channel_init.h"
 #include "src/core/lib/surface/channel_stack_type.h"
@@ -125,7 +126,8 @@ static int check_stack(const char* file, int line, const char* transport_name,
                        grpc_channel_args* init_args,
                        unsigned channel_stack_type, ...) {
   // create phony channel stack
-  grpc_channel_stack_builder* builder = grpc_channel_stack_builder_create();
+  grpc_channel_stack_builder* builder =
+      grpc_channel_stack_builder_create("test");
   grpc_transport_vtable fake_transport_vtable;
   memset(&fake_transport_vtable, 0, sizeof(grpc_transport_vtable));
   fake_transport_vtable.name = transport_name;
@@ -138,7 +140,7 @@ static int check_stack(const char* file, int line, const char* transport_name,
   {
     grpc_core::ExecCtx exec_ctx;
     grpc_channel_stack_builder_set_channel_arguments(builder, channel_args);
-    GPR_ASSERT(grpc_channel_init_create_stack(
+    GPR_ASSERT(grpc_core::CoreConfiguration::Get().channel_init().CreateStack(
         builder, (grpc_channel_stack_type)channel_stack_type));
   }
 

@@ -35,6 +35,7 @@ _HealthCheckGRPC = HealthCheckProtocol.GRPC
 _NetworkSecurityV1Beta1 = gcp.network_security.NetworkSecurityV1Beta1
 ServerTlsPolicy = gcp.network_security.ServerTlsPolicy
 ClientTlsPolicy = gcp.network_security.ClientTlsPolicy
+AuthorizationPolicy = gcp.network_security.AuthorizationPolicy
 
 # Network Services
 _NetworkServicesV1Alpha1 = gcp.network_services.NetworkServicesV1Alpha1
@@ -68,9 +69,12 @@ class TrafficDirectorManager:
         resource_prefix: str,
         resource_suffix: str,
         network: str = 'default',
+        compute_api_version: str = 'v1',
     ):
         # API
-        self.compute = _ComputeV1(gcp_api_manager, project)
+        self.compute = _ComputeV1(gcp_api_manager,
+                                  project,
+                                  version=compute_api_version)
 
         # Settings
         self.project: str = project
@@ -543,7 +547,7 @@ class TrafficDirectorManager:
 class TrafficDirectorAppNetManager(TrafficDirectorManager):
 
     GRPC_ROUTE_NAME = "grpc-route"
-    ROUTER_NAME = "router"
+    MESH_NAME = "mesh"
 
     netsvc: _NetworkServicesV1Alpha1
 
@@ -552,55 +556,62 @@ class TrafficDirectorAppNetManager(TrafficDirectorManager):
                  project: str,
                  *,
                  resource_prefix: str,
+                 config_scope: str,
                  resource_suffix: Optional[str] = None,
-                 network: str = 'default'):
+                 network: str = 'default',
+                 compute_api_version: str = 'v1'):
         super().__init__(gcp_api_manager,
                          project,
                          resource_prefix=resource_prefix,
                          resource_suffix=resource_suffix,
-                         network=network)
+                         network=network,
+                         compute_api_version=compute_api_version)
+
+        self.config_scope = config_scope
 
         # API
         self.netsvc = _NetworkServicesV1Alpha1(gcp_api_manager, project)
 
         # Managed resources
         self.grpc_route: Optional[_NetworkServicesV1Alpha1.GrpcRoute] = None
-        self.router: Optional[_NetworkServicesV1Alpha1.Router] = None
+        self.mesh: Optional[_NetworkServicesV1Alpha1.Mesh] = None
 
-    def create_router(self) -> GcpResource:
-        name = self.make_resource_name(self.ROUTER_NAME)
-        logger.info("Creating Router %s", name)
+    def create_mesh(self) -> GcpResource:
+        name = self.make_resource_name(self.MESH_NAME)
+        logger.info("Creating Mesh %s", name)
         body = {
             "type": "PROXYLESS_GRPC",
-            "routes": [self.grpc_route.url],
-            "network": "default",
+            "scope": self.config_scope,
         }
-        resource = self.netsvc.create_router(name, body)
-        self.router = self.netsvc.get_router(name)
-        logger.debug("Loaded Router: %s", self.router)
+        resource = self.netsvc.create_mesh(name, body)
+        self.mesh = self.netsvc.get_mesh(name)
+        logger.debug("Loaded Mesh: %s", self.mesh)
         return resource
 
-    def delete_router(self, force=False):
+    def delete_mesh(self, force=False):
         if force:
-            name = self.make_resource_name(self.ROUTER_NAME)
-        elif self.router:
-            name = self.router.name
+            name = self.make_resource_name(self.MESH_NAME)
+        elif self.mesh:
+            name = self.mesh.name
         else:
             return
-        logger.info('Deleting Router %s', name)
-        self.netsvc.delete_router(name)
-        self.router = None
+        logger.info('Deleting Mesh %s', name)
+        self.netsvc.delete_mesh(name)
+        self.mesh = None
 
     def create_grpc_route(self, src_host: str, src_port: int) -> GcpResource:
         host = f'{src_host}:{src_port}'
+        service_name = self.netsvc.resource_full_name(self.backend_service.name,
+                                                      "backendServices")
         body = {
+            "meshes": [self.mesh.url],
             "hostnames":
                 host,
             "rules": [{
                 "action": {
-                    "destination": {
-                        "serviceName": self.backend_service.name
-                    }
+                    "destinations": [{
+                        "serviceName": service_name
+                    }]
                 }
             }],
         }
@@ -631,14 +642,15 @@ class TrafficDirectorAppNetManager(TrafficDirectorManager):
         self.grpc_route = None
 
     def cleanup(self, *, force=False):
-        self.delete_router(force=force)
         self.delete_grpc_route(force=force)
+        self.delete_mesh(force=force)
         super().cleanup(force=force)
 
 
 class TrafficDirectorSecureManager(TrafficDirectorManager):
     SERVER_TLS_POLICY_NAME = "server-tls-policy"
     CLIENT_TLS_POLICY_NAME = "client-tls-policy"
+    AUTHZ_POLICY_NAME = "authz-policy"
     ENDPOINT_POLICY = "endpoint-policy"
     CERTIFICATE_PROVIDER_INSTANCE = "google_cloud_private_spiffe"
 
@@ -653,12 +665,14 @@ class TrafficDirectorSecureManager(TrafficDirectorManager):
         resource_prefix: str,
         resource_suffix: Optional[str] = None,
         network: str = 'default',
+        compute_api_version: str = 'v1',
     ):
         super().__init__(gcp_api_manager,
                          project,
                          resource_prefix=resource_prefix,
                          resource_suffix=resource_suffix,
-                         network=network)
+                         network=network,
+                         compute_api_version=compute_api_version)
 
         # API
         self.netsec = _NetworkSecurityV1Beta1(gcp_api_manager, project)
@@ -667,6 +681,7 @@ class TrafficDirectorSecureManager(TrafficDirectorManager):
         # Managed resources
         self.server_tls_policy: Optional[ServerTlsPolicy] = None
         self.client_tls_policy: Optional[ClientTlsPolicy] = None
+        self.authz_policy: Optional[AuthorizationPolicy] = None
         self.endpoint_policy: Optional[EndpointPolicy] = None
 
     def setup_server_security(self,
@@ -697,6 +712,7 @@ class TrafficDirectorSecureManager(TrafficDirectorManager):
         self.delete_endpoint_policy(force=force)
         self.delete_server_tls_policy(force=force)
         self.delete_client_tls_policy(force=force)
+        self.delete_authz_policy(force=force)
 
     def create_server_tls_policy(self, *, tls, mtls):
         name = self.make_resource_name(self.SERVER_TLS_POLICY_NAME)
@@ -731,6 +747,29 @@ class TrafficDirectorSecureManager(TrafficDirectorManager):
         self.netsec.delete_server_tls_policy(name)
         self.server_tls_policy = None
 
+    def create_authz_policy(self, *, action: str, rules: list):
+        name = self.make_resource_name(self.AUTHZ_POLICY_NAME)
+        logger.info('Creating Authz Policy %s', name)
+        policy = {
+            "action": action,
+            "rules": rules,
+        }
+
+        self.netsec.create_authz_policy(name, policy)
+        self.authz_policy = self.netsec.get_authz_policy(name)
+        logger.debug('Authz Policy loaded: %r', self.authz_policy)
+
+    def delete_authz_policy(self, force=False):
+        if force:
+            name = self.make_resource_name(self.AUTHZ_POLICY_NAME)
+        elif self.authz_policy:
+            name = self.authz_policy.name
+        else:
+            return
+        logger.info('Deleting Authz Policy %s', name)
+        self.netsec.delete_authz_policy(name)
+        self.authz_policy = None
+
     def create_endpoint_policy(self, *, server_namespace: str, server_name: str,
                                server_port: int) -> None:
         name = self.make_resource_name(self.ENDPOINT_POLICY)
@@ -757,6 +796,8 @@ class TrafficDirectorSecureManager(TrafficDirectorManager):
             logger.warning(
                 'Creating Endpoint Policy %s with '
                 'no Server TLS policy attached', name)
+        if self.authz_policy:
+            config["authorizationPolicy"] = self.authz_policy.name
 
         self.netsvc.create_endpoint_policy(name, config)
         self.endpoint_policy = self.netsvc.get_endpoint_policy(name)

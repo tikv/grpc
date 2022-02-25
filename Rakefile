@@ -23,12 +23,6 @@ end
 
 # Add the extension compiler task
 Rake::ExtensionTask.new('grpc_c', spec) do |ext|
-  unless RUBY_PLATFORM =~ /darwin/
-    # TODO: also set "no_native to true" for mac if possible. As is,
-    # "no_native" can only be set if the RUBY_PLATFORM doing
-    # cross-compilation is contained in the "ext.cross_platform" array.
-    ext.no_native = true
-  end
   ext.source_pattern = '**/*.{c,h}'
   ext.ext_dir = File.join('src', 'ruby', 'ext', 'grpc')
   ext.lib_dir = File.join('src', 'ruby', 'lib', 'grpc')
@@ -36,6 +30,7 @@ Rake::ExtensionTask.new('grpc_c', spec) do |ext|
   ext.cross_platform = [
     'x86-mingw32', 'x64-mingw32',
     'x86_64-linux', 'x86-linux',
+    'x86_64-darwin', 'arm64-darwin',
     'universal-darwin'
   ]
   ext.cross_compiling do |spec|
@@ -46,6 +41,8 @@ Rake::ExtensionTask.new('grpc_c', spec) do |ext|
     spec.files += Dir.glob('src/ruby/pb/**/*')
   end
 end
+
+CLEAN.add "src/ruby/lib/grpc/[0-9].[0-9]", "src/ruby/lib/grpc/grpc_c.{bundle,so}"
 
 # Define the test suites
 SPEC_SUITES = [
@@ -85,6 +82,8 @@ desc 'Build the Windows gRPC DLLs for Ruby'
 task 'dlls' do
   grpc_config = ENV['GRPC_CONFIG'] || 'opt'
   verbose = ENV['V'] || '0'
+  # use env variable to set artifact build paralellism
+  nproc_override = ENV['GRPC_RUBY_BUILD_PROCS'] || `nproc`.strip
 
   env = 'CPPFLAGS="-D_WIN32_WINNT=0x600 -DNTDDI_VERSION=0x06000000 -DUNICODE -D_UNICODE -Wno-unused-variable -Wno-unused-result -DCARES_STATICLIB -Wno-error=conversion -Wno-sign-compare -Wno-parentheses -Wno-format -DWIN32_LEAN_AND_MEAN" '
   env += 'CFLAGS="-Wno-incompatible-pointer-types" '
@@ -96,6 +95,8 @@ task 'dlls' do
   env += 'EMBED_CARES=true '
   env += 'BUILDDIR=/tmp '
   env += "V=#{verbose} "
+  env += "GRPC_RUBY_BUILD_PROCS=#{nproc_override} "
+
   out = GrpcBuildConfig::CORE_WINDOWS_DLL
 
   w64 = { cross: 'x86_64-w64-mingw32', out: 'grpc_c.64.ruby', platform: 'x64-mingw32' }
@@ -106,14 +107,13 @@ task 'dlls' do
     env_comp += "CXX=#{opt[:cross]}-g++ "
     env_comp += "LD=#{opt[:cross]}-gcc "
     env_comp += "LDXX=#{opt[:cross]}-g++ "
-    run_rake_compiler opt[:platform], <<-EOT
+    run_rake_compiler(opt[:platform], <<~EOT)
       gem update --system --no-document && \
-      #{env} #{env_comp} make -j`nproc` #{out} && \
+      #{env} #{env_comp} make -j#{nproc_override} #{out} && \
       #{opt[:cross]}-strip -x -S #{out} && \
       cp #{out} #{opt[:out]}
     EOT
   end
-
 end
 
 desc 'Build the native gem file under rake_compiler_dock'
@@ -121,7 +121,7 @@ task 'gem:native' do
   verbose = ENV['V'] || '0'
 
   grpc_config = ENV['GRPC_CONFIG'] || 'opt'
-  ruby_cc_versions = ['3.0.0', '2.7.0', '2.6.0', '2.5.0', '2.4.0'].join(':')
+  ruby_cc_versions = ['3.0.0', '2.7.0', '2.6.0', '2.5.0'].join(':')
 
   if RUBY_PLATFORM =~ /darwin/
     FileUtils.touch 'grpc_c.32.ruby'
@@ -131,30 +131,37 @@ task 'gem:native' do
         "invoked on macos with ruby #{RUBY_VERSION}. The ruby macos artifact " \
         "build should be running on ruby 2.5."
     end
-    system "rake cross native gem RUBY_CC_VERSION=#{ruby_cc_versions} V=#{verbose} GRPC_CONFIG=#{grpc_config}"
+    system "bundle exec rake cross native gem RUBY_CC_VERSION=#{ruby_cc_versions} V=#{verbose} GRPC_CONFIG=#{grpc_config}"
   else
+    # use env variable to set artifact build paralellism
+    nproc_override = ENV['GRPC_RUBY_BUILD_PROCS'] || `nproc`.strip
+
     Rake::Task['dlls'].execute
     ['x86-mingw32', 'x64-mingw32'].each do |plat|
-      run_rake_compiler plat, <<-EOT
+      run_rake_compiler(plat, <<~EOT)
         gem update --system --no-document && \
         bundle && \
-        rake native:#{plat} pkg/#{spec.full_name}-#{plat}.gem pkg/#{spec.full_name}.gem \
+        bundle exec rake clean && \
+        bundle exec rake native:#{plat} pkg/#{spec.full_name}-#{plat}.gem pkg/#{spec.full_name}.gem \
           RUBY_CC_VERSION=#{ruby_cc_versions} \
           V=#{verbose} \
-          GRPC_CONFIG=#{grpc_config}
+          GRPC_CONFIG=#{grpc_config} \
+          GRPC_RUBY_BUILD_PROCS=#{nproc_override}
       EOT
     end
     # Truncate grpc_c.*.ruby files because they're for Windows only.
     File.truncate('grpc_c.32.ruby', 0)
     File.truncate('grpc_c.64.ruby', 0)
-    ['x86_64-linux', 'x86-linux'].each do |plat|
-      run_rake_compiler plat, <<-EOT
+    ['x86_64-linux', 'x86-linux', 'x86_64-darwin', 'arm64-darwin'].each do |plat|
+      run_rake_compiler(plat, <<~EOT)
         gem update --system --no-document && \
         bundle && \
-        rake native:#{plat} pkg/#{spec.full_name}-#{plat}.gem pkg/#{spec.full_name}.gem \
+        bundle exec rake clean && \
+        bundle exec rake native:#{plat} pkg/#{spec.full_name}-#{plat}.gem pkg/#{spec.full_name}.gem \
           RUBY_CC_VERSION=#{ruby_cc_versions} \
           V=#{verbose} \
-          GRPC_CONFIG=#{grpc_config}
+          GRPC_CONFIG=#{grpc_config} \
+          GRPC_RUBY_BUILD_PROCS=#{nproc_override}
       EOT
     end
   end

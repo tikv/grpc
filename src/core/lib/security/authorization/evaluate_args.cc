@@ -71,6 +71,8 @@ EvaluateArgs::PerChannelArgs::PerChannelArgs(grpc_auth_context* auth_context,
     dns_sans = GetAuthPropertyArray(auth_context, GRPC_PEER_DNS_PROPERTY_NAME);
     common_name =
         GetAuthPropertyValue(auth_context, GRPC_X509_CN_PROPERTY_NAME);
+    subject =
+        GetAuthPropertyValue(auth_context, GRPC_X509_SUBJECT_PROPERTY_NAME);
   }
   if (endpoint != nullptr) {
     local_address = ParseEndpointUri(grpc_endpoint_get_local_address(endpoint));
@@ -79,48 +81,43 @@ EvaluateArgs::PerChannelArgs::PerChannelArgs(grpc_auth_context* auth_context,
 }
 
 absl::string_view EvaluateArgs::GetPath() const {
-  absl::string_view path;
-  if (metadata_ != nullptr && metadata_->idx.named.path != nullptr) {
-    grpc_linked_mdelem* elem = metadata_->idx.named.path;
-    const grpc_slice& val = GRPC_MDVALUE(elem->md);
-    path = StringViewFromSlice(val);
+  if (metadata_ != nullptr) {
+    const auto* path = metadata_->get_pointer(HttpPathMetadata());
+    if (path != nullptr) {
+      return path->as_string_view();
+    }
   }
-  return path;
+  return absl::string_view();
 }
 
 absl::string_view EvaluateArgs::GetHost() const {
   absl::string_view host;
-  if (metadata_ != nullptr && metadata_->idx.named.host != nullptr) {
-    grpc_linked_mdelem* elem = metadata_->idx.named.host;
-    const grpc_slice& val = GRPC_MDVALUE(elem->md);
-    host = StringViewFromSlice(val);
+  if (metadata_ != nullptr) {
+    if (auto* host_md = metadata_->get_pointer(HostMetadata())) {
+      host = host_md->as_string_view();
+    }
   }
   return host;
 }
 
-absl::string_view EvaluateArgs::GetMethod() const {
-  absl::string_view method;
-  if (metadata_ != nullptr && metadata_->idx.named.method != nullptr) {
-    grpc_linked_mdelem* elem = metadata_->idx.named.method;
-    const grpc_slice& val = GRPC_MDVALUE(elem->md);
-    method = StringViewFromSlice(val);
+absl::string_view EvaluateArgs::GetAuthority() const {
+  absl::string_view authority;
+  if (metadata_ != nullptr) {
+    if (auto* authority_md = metadata_->get_pointer(HttpAuthorityMetadata())) {
+      authority = authority_md->as_string_view();
+    }
   }
-  return method;
+  return authority;
 }
 
-std::multimap<absl::string_view, absl::string_view> EvaluateArgs::GetHeaders()
-    const {
-  std::multimap<absl::string_view, absl::string_view> headers;
-  if (metadata_ == nullptr) {
-    return headers;
+absl::string_view EvaluateArgs::GetMethod() const {
+  if (metadata_ != nullptr) {
+    auto method_md = metadata_->get(HttpMethodMetadata());
+    if (method_md.has_value()) {
+      return HttpMethodMetadata::Encode(*method_md).as_string_view();
+    }
   }
-  for (grpc_linked_mdelem* elem = metadata_->list.head; elem != nullptr;
-       elem = elem->next) {
-    const grpc_slice& key = GRPC_MDKEY(elem->md);
-    const grpc_slice& val = GRPC_MDVALUE(elem->md);
-    headers.emplace(StringViewFromSlice(key), StringViewFromSlice(val));
-  }
-  return headers;
+  return absl::string_view();
 }
 
 absl::optional<absl::string_view> EvaluateArgs::GetHeaderValue(
@@ -128,7 +125,14 @@ absl::optional<absl::string_view> EvaluateArgs::GetHeaderValue(
   if (metadata_ == nullptr) {
     return absl::nullopt;
   }
-  return grpc_metadata_batch_get_value(metadata_, key, concatenated_value);
+  if (absl::EqualsIgnoreCase(key, "te")) {
+    return absl::nullopt;
+  }
+  if (absl::EqualsIgnoreCase(key, "host")) {
+    // Maps legacy host header to :authority.
+    return GetAuthority();
+  }
+  return metadata_->GetStringValue(key, concatenated_value);
 }
 
 grpc_resolved_address EvaluateArgs::GetLocalAddress() const {
@@ -206,6 +210,13 @@ absl::string_view EvaluateArgs::GetCommonName() const {
     return "";
   }
   return channel_args_->common_name;
+}
+
+absl::string_view EvaluateArgs::GetSubject() const {
+  if (channel_args_ == nullptr) {
+    return "";
+  }
+  return channel_args_->subject;
 }
 
 }  // namespace grpc_core

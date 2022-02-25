@@ -29,9 +29,9 @@
 
 #include "src/core/lib/channel/channel_args.h"
 #include "src/core/lib/gpr/string.h"
-#include "src/core/lib/gprpp/arena.h"
 #include "src/core/lib/gprpp/ref_counted.h"
 #include "src/core/lib/gprpp/ref_counted_ptr.h"
+#include "src/core/lib/resource_quota/arena.h"
 #include "src/core/lib/surface/api_trace.h"
 #include "src/core/lib/surface/call.h"
 
@@ -223,7 +223,7 @@ grpc_auth_property_iterator grpc_auth_context_peer_identity(
 void grpc_auth_context::ensure_capacity() {
   if (properties_.count == properties_.capacity) {
     properties_.capacity =
-        GPR_MAX(properties_.capacity + 8, properties_.capacity * 2);
+        std::max(properties_.capacity + 8, properties_.capacity * 2);
     properties_.array = static_cast<grpc_auth_property*>(gpr_realloc(
         properties_.array, properties_.capacity * sizeof(grpc_auth_property)));
   }
@@ -235,7 +235,9 @@ void grpc_auth_context::add_property(const char* name, const char* value,
   grpc_auth_property* prop = &properties_.array[properties_.count++];
   prop->name = gpr_strdup(name);
   prop->value = static_cast<char*>(gpr_malloc(value_length + 1));
-  memcpy(prop->value, value, value_length);
+  if (value != nullptr) {
+    memcpy(prop->value, value, value_length);
+  }
   prop->value[value_length] = '\0';
   prop->value_length = value_length;
 }
@@ -289,7 +291,9 @@ static void* auth_context_pointer_arg_copy(void* p) {
              : ctx->Ref(DEBUG_LOCATION, "auth_context_pointer_arg").release();
 }
 
-static int auth_context_pointer_cmp(void* a, void* b) { return GPR_ICMP(a, b); }
+static int auth_context_pointer_cmp(void* a, void* b) {
+  return grpc_core::QsortCompare(a, b);
+}
 
 static const grpc_arg_pointer_vtable auth_context_pointer_vtable = {
     auth_context_pointer_arg_copy, auth_context_pointer_arg_destroy,

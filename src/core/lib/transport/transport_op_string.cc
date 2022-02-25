@@ -40,27 +40,14 @@
 /* These routines are here to facilitate debugging - they produce string
    representations of various transport data structures */
 
-static void put_metadata(grpc_mdelem md, std::vector<std::string>* out) {
-  out->push_back("key=");
-  char* dump = grpc_dump_slice(GRPC_MDKEY(md), GPR_DUMP_HEX | GPR_DUMP_ASCII);
-  out->push_back(dump);
-  gpr_free(dump);
-  out->push_back(" value=");
-  dump = grpc_dump_slice(GRPC_MDVALUE(md), GPR_DUMP_HEX | GPR_DUMP_ASCII);
-  out->push_back(dump);
-  gpr_free(dump);
-}
-
-static void put_metadata_list(grpc_metadata_batch md,
+static void put_metadata_list(const grpc_metadata_batch& md,
                               std::vector<std::string>* out) {
-  grpc_linked_mdelem* m;
-  for (m = md.list.head; m != nullptr; m = m->next) {
-    if (m != md.list.head) out->push_back(", ");
-    put_metadata(m->md, out);
-  }
-  if (md.deadline != GRPC_MILLIS_INF_FUTURE) {
-    out->push_back(absl::StrFormat(" deadline=%" PRId64, md.deadline));
-  }
+  bool first = true;
+  md.Log([out, &first](absl::string_view key, absl::string_view value) {
+    if (!first) out->push_back(", ");
+    first = false;
+    out->push_back(absl::StrCat(key, "=", value));
+  });
 }
 
 std::string grpc_transport_stream_op_batch_string(

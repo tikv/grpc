@@ -39,7 +39,6 @@ namespace {
 
 using ::grpc_event_engine::experimental::EventEngine;
 using ::grpc_event_engine::experimental::ResolvedAddressToURI;
-using ::grpc_event_engine::experimental::SliceAllocator;
 using ::grpc_event_engine::experimental::SliceBuffer;
 
 void endpoint_read(grpc_endpoint* ep, grpc_slice_buffer* slices,
@@ -96,12 +95,12 @@ void endpoint_delete_from_pollset_set(grpc_endpoint* /* ep */,
 /// and will return some kind of sane default (empty strings, nullptrs, etc). It
 /// is the caller's responsibility to ensure that calls to endpoint_shutdown are
 /// synchronized.
-void endpoint_shutdown(grpc_endpoint* ep, grpc_error* why) {
+void endpoint_shutdown(grpc_endpoint* ep, grpc_error_handle why) {
   auto* eeep = reinterpret_cast<grpc_event_engine_endpoint*>(ep);
   if (GRPC_TRACE_FLAG_ENABLED(grpc_tcp_trace)) {
-    const char* str = grpc_error_string(why);
+    std::string str = grpc_error_std_string(why);
     gpr_log(GPR_INFO, "TCP Endpoint %p shutdown why=%s", eeep->endpoint.get(),
-            str);
+            str.c_str());
   }
   eeep->endpoint.reset();
 }
@@ -163,8 +162,8 @@ grpc_event_engine_endpoint* grpc_tcp_server_endpoint_create(
   return endpoint;
 }
 
-grpc_endpoint* grpc_tcp_create(const grpc_channel_args* channel_args,
-                               absl::string_view peer_address) {
+grpc_endpoint* grpc_tcp_create(const grpc_channel_args* /* channel_args */,
+                               absl::string_view /* peer_address */) {
   auto endpoint = new grpc_event_engine_endpoint;
   endpoint->base.vtable = &grpc_event_engine_endpoint_vtable;
   return &endpoint->base;
