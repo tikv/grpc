@@ -1725,14 +1725,12 @@ add_library(grpc
   src/core/ext/upb-generated/google/api/expr/v1alpha1/syntax.upb.c
   src/core/ext/upb-generated/google/api/expr/v1alpha1/value.upb.c
   src/core/ext/upb-generated/google/api/http.upb.c
-  src/core/ext/upb-generated/google/protobuf/any.upb.c
   src/core/ext/upb-generated/google/protobuf/descriptor.upb.c
   src/core/ext/upb-generated/google/protobuf/duration.upb.c
   src/core/ext/upb-generated/google/protobuf/empty.upb.c
   src/core/ext/upb-generated/google/protobuf/struct.upb.c
   src/core/ext/upb-generated/google/protobuf/timestamp.upb.c
   src/core/ext/upb-generated/google/protobuf/wrappers.upb.c
-  src/core/ext/upb-generated/google/rpc/status.upb.c
   src/core/ext/upb-generated/src/proto/grpc/gcp/altscontext.upb.c
   src/core/ext/upb-generated/src/proto/grpc/gcp/handshaker.upb.c
   src/core/ext/upb-generated/src/proto/grpc/gcp/transport_security_common.upb.c
@@ -1835,7 +1833,6 @@ add_library(grpc
   src/core/ext/upbdefs-generated/google/api/expr/v1alpha1/value.upbdefs.c
   src/core/ext/upbdefs-generated/google/api/http.upbdefs.c
   src/core/ext/upbdefs-generated/google/protobuf/any.upbdefs.c
-  src/core/ext/upbdefs-generated/google/protobuf/descriptor.upbdefs.c
   src/core/ext/upbdefs-generated/google/protobuf/duration.upbdefs.c
   src/core/ext/upbdefs-generated/google/protobuf/empty.upbdefs.c
   src/core/ext/upbdefs-generated/google/protobuf/struct.upbdefs.c
@@ -3973,7 +3970,6 @@ add_library(upb
   third_party/upb/upb/table.c
   third_party/upb/upb/text_encode.c
   third_party/upb/upb/upb.c
-  src/core/ext/upb-generated/google/protobuf/descriptor.upb.c
   src/core/ext/upbdefs-generated/google/protobuf/descriptor.upbdefs.c
 )
 
