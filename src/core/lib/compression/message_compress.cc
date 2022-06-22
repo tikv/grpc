@@ -46,7 +46,7 @@ class GzipCompressionOptionsImpl : public CompressionOptions {
 };
 
 std::unique_ptr<CompressionOptions> MakeCompressionOptions(const grpc_channel_args* args) {
-  return std::make_unique<GzipCompressionOptionsImpl>(args);
+  return absl::make_unique<GzipCompressionOptionsImpl>(args);
 }
 }  // namespace grpc_core
 
