@@ -24,7 +24,6 @@
 #include <string.h>
 #include <zlib.h>
 #include <cstdint>
-
 #include <cstdint>
 
 #include "absl/container/inlined_vector.h"
