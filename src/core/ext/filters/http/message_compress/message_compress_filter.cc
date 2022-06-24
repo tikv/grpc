@@ -113,7 +113,7 @@ class CallData {
     compression_options_ = channeld->compression_options();
     min_message_size_to_compress_ = channeld->min_message_size_to_compress();
     GRPC_CLOSURE_INIT(&start_send_message_batch_in_call_combiner_,
-                      StartSendMessageBatch, elem, grpc_schedule_on_exec_ctx);    
+                      StartSendMessageBatch, elem, grpc_schedule_on_exec_ctx);
   }
 
   ~CallData() {
