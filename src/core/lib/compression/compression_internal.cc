@@ -25,6 +25,8 @@
 
 #include <cstdint>
 
+#include <zlib.h>
+
 #include "absl/container/inlined_vector.h"
 #include "absl/strings/str_join.h"
 #include "absl/strings/str_split.h"
@@ -35,6 +37,8 @@
 #include "src/core/lib/gpr/useful.h"
 #include "src/core/lib/slice/slice_utils.h"
 #include "src/core/lib/surface/api_trace.h"
+
+#define GRPC_DEFAULT_MIN_MESSAGE_SIZE_TO_COMPRESS (0)
 
 namespace grpc_core {
 
@@ -218,6 +222,19 @@ DefaultCompressionAlgorithmFromChannelArgs(const grpc_channel_args* args) {
     }
   }
   return absl::nullopt;
+}
+
+int DefaultGzipCompressionLevelFromChannelArgs(const grpc_channel_args* args) {
+  return grpc_channel_args_find_integer(
+      args, GRPC_ARG_GZIP_COMPRESSION_LEVEL,
+      {Z_DEFAULT_COMPRESSION, Z_NO_COMPRESSION, Z_BEST_COMPRESSION});
+}
+
+int DefaultGrpcMinMessageSizeToCompressFromChannelArgs(
+    const grpc_channel_args* args) {
+  return grpc_channel_args_find_integer(
+      args, GRPC_ARG_MIN_MESSAGE_SIZE_TO_COMPRESS,
+      {GRPC_DEFAULT_MIN_MESSAGE_SIZE_TO_COMPRESS, 0, INT_MAX});
 }
 
 }  // namespace grpc_core

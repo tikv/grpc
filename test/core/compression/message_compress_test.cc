@@ -50,7 +50,8 @@ static void assert_passthrough(grpc_slice value,
   grpc_slice final;
   int was_compressed;
   const char* algorithm_name;
-
+  std::unique_ptr<CompressionOptions> options =
+      grpc_core::MakeCompressionOptions(nullptr);
   GPR_ASSERT(grpc_compression_algorithm_name(algorithm, &algorithm_name) != 0);
   gpr_log(GPR_INFO,
           "assert_passthrough: value_length=%" PRIuPTR
@@ -71,7 +72,8 @@ static void assert_passthrough(grpc_slice value,
 
   {
     grpc_core::ExecCtx exec_ctx;
-    was_compressed = grpc_msg_compress(algorithm, &input, &compressed_raw);
+    was_compressed =
+        grpc_msg_compress(algorithm, &input, &compressed_raw, options.get());
   }
   GPR_ASSERT(input.count > 0);
 
@@ -143,6 +145,8 @@ static grpc_slice create_test_value(test_value id) {
 static void test_tiny_data_compress(void) {
   grpc_slice_buffer input;
   grpc_slice_buffer output;
+  std::unique_ptr<CompressionOptions> options =
+      grpc_core::MakeCompressionOptions(nullptr);
 
   grpc_slice_buffer_init(&input);
   grpc_slice_buffer_init(&output);
@@ -153,7 +157,7 @@ static void test_tiny_data_compress(void) {
     grpc_core::ExecCtx exec_ctx;
     GPR_ASSERT(0 ==
                grpc_msg_compress(static_cast<grpc_compression_algorithm>(i),
-                                 &input, &output));
+                                 &input, &output, options.get()));
     GPR_ASSERT(1 == output.count);
   }
 
@@ -167,6 +171,8 @@ static void test_bad_decompression_data_crc(void) {
   grpc_slice_buffer output;
   size_t idx;
   const uint32_t bad = 0xdeadbeef;
+  std::unique_ptr<CompressionOptions> options =
+      grpc_core::MakeCompressionOptions(nullptr);
 
   grpc_slice_buffer_init(&input);
   grpc_slice_buffer_init(&corrupted);
@@ -175,7 +181,7 @@ static void test_bad_decompression_data_crc(void) {
 
   grpc_core::ExecCtx exec_ctx;
   /* compress it */
-  grpc_msg_compress(GRPC_COMPRESS_GZIP, &input, &corrupted);
+  grpc_msg_compress(GRPC_COMPRESS_GZIP, &input, &corrupted, options.get());
   /* corrupt the output by smashing the CRC */
   GPR_ASSERT(corrupted.count > 1);
   GPR_ASSERT(GRPC_SLICE_LENGTH(corrupted.slices[1]) > 8);
@@ -195,6 +201,8 @@ static void test_bad_decompression_data_missing_trailer(void) {
   grpc_slice_buffer decompressed;
   grpc_slice_buffer garbage;
   grpc_slice_buffer output;
+  std::unique_ptr<CompressionOptions> options =
+      grpc_core::MakeCompressionOptions(nullptr);
 
   grpc_slice_buffer_init(&input);
   grpc_slice_buffer_init(&decompressed);
@@ -204,7 +212,7 @@ static void test_bad_decompression_data_missing_trailer(void) {
 
   grpc_core::ExecCtx exec_ctx;
   /* compress it */
-  grpc_msg_compress(GRPC_COMPRESS_GZIP, &input, &decompressed);
+  grpc_msg_compress(GRPC_COMPRESS_GZIP, &input, &decompressed, options.get());
   GPR_ASSERT(decompressed.length > 8);
   /* Remove the footer from the decompressed message */
   grpc_slice_buffer_trim_end(&decompressed, 8, &garbage);
@@ -258,6 +266,8 @@ static void test_bad_compression_algorithm(void) {
   grpc_slice_buffer input;
   grpc_slice_buffer output;
   int was_compressed;
+  std::unique_ptr<CompressionOptions> options =
+      grpc_core::MakeCompressionOptions(nullptr);
 
   grpc_slice_buffer_init(&input);
   grpc_slice_buffer_init(&output);
@@ -266,12 +276,12 @@ static void test_bad_compression_algorithm(void) {
 
   grpc_core::ExecCtx exec_ctx;
   was_compressed =
-      grpc_msg_compress(GRPC_COMPRESS_ALGORITHMS_COUNT, &input, &output);
+      grpc_msg_compress(GRPC_COMPRESS_ALGORITHMS_COUNT, &input, options.get());
   GPR_ASSERT(0 == was_compressed);
 
   was_compressed = grpc_msg_compress(static_cast<grpc_compression_algorithm>(
                                          GRPC_COMPRESS_ALGORITHMS_COUNT + 123),
-                                     &input, &output);
+                                     &input, &output, options.get());
   GPR_ASSERT(0 == was_compressed);
 
   grpc_slice_buffer_destroy(&input);

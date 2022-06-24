@@ -21,15 +21,33 @@
 
 #include <grpc/support/port_platform.h>
 
+#include <memory>
+
+#include <grpc/impl/codegen/compression_types.h>
+#include <grpc/impl/codegen/grpc_types.h>
+#include <grpc/slice.h>
 #include <grpc/slice_buffer.h>
 
 #include "src/core/lib/compression/compression_internal.h"
+
+namespace grpc_core {
+class CompressionOptions {
+ public:
+  virtual ~CompressionOptions() = default;
+};
+
+// Return Compression options
+std::unique_ptr<CompressionOptions> MakeCompressionOptions(
+    const grpc_channel_args* args);
+
+}  // namespace grpc_core
 
 /* compress 'input' to 'output' using 'algorithm'.
    On success, appends compressed slices to output and returns 1.
    On failure, appends uncompressed slices to output and returns 0. */
 int grpc_msg_compress(grpc_compression_algorithm algorithm,
-                      grpc_slice_buffer* input, grpc_slice_buffer* output);
+                      grpc_slice_buffer* input, grpc_slice_buffer* output,
+                      const grpc_core::CompressionOptions* options);
 
 /* decompress 'input' to 'output' using 'algorithm'.
    On success, appends slices to output and returns 1.

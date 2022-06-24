@@ -47,6 +47,11 @@ const char* CompressionAlgorithmAsString(grpc_compression_algorithm algorithm);
 absl::optional<grpc_compression_algorithm>
 DefaultCompressionAlgorithmFromChannelArgs(const grpc_channel_args* args);
 
+int DefaultGzipCompressionLevelFromChannelArgs(const grpc_channel_args* args);
+
+int DefaultGrpcMinMessageSizeToCompressFromChannelArgs(
+    const grpc_channel_args* args);
+
 // A set of grpc_compression_algorithm values.
 class CompressionAlgorithmSet {
  public:
