@@ -91,9 +91,9 @@ static void client_setup_transport(grpc_transport* transport) {
       grpc_channel_args_copy_and_add(nullptr, &authority_arg, 1);
   /* TODO (pjaikumar): use GRPC_CLIENT_CHANNEL instead of
    * GRPC_CLIENT_DIRECT_CHANNEL */
-  g_ctx.client =
-      grpc_channel_create("socketpair-target", args, GRPC_CLIENT_DIRECT_CHANNEL,
-                          transport, nullptr);
+  g_ctx.client = grpc_channel_create_internal("socketpair-target", args,
+                                              GRPC_CLIENT_DIRECT_CHANNEL,
+                                              transport, nullptr);
   grpc_channel_args_destroy(args);
 }
 
@@ -737,7 +737,7 @@ static void test_close_before_call_create() {
 }
 
 int main(int argc, char** argv) {
-  grpc::testing::TestEnvironment env(argc, argv);
+  grpc::testing::TestEnvironment env(&argc, argv);
   /* Init grpc */
   grpc_init();
   int iterations = 10;

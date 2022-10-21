@@ -78,7 +78,12 @@ namespace Grpc.Core.Internal
             var profiler = Profilers.ForCurrentThread();
 
             using (profiler.NewScope("AsyncCall.UnaryCall"))
-            using (CompletionQueueSafeHandle cq = CompletionQueueSafeHandle.CreateSync())
+
+            // Create a pluckable completion queue for the call. Avoid creating a completion queue when we know the channel has already
+            // been shutdown. In such case, the call will fail with ObjectDisposedException immediately anyway and creating / destroying
+            // a completion queue would lead to crash if this was the last channel in the application (and thus GrpcEnvironment has been shutdown).
+            // See https://github.com/grpc/grpc/issues/19090
+            using (CompletionQueueSafeHandle cq = details.Channel.Handle.IsClosed ?  null : CompletionQueueSafeHandle.CreateSync())
             {
                 bool callStartedOk = false;
                 try
@@ -428,6 +433,11 @@ namespace Grpc.Core.Internal
             return new RpcException(finishedStatus.Value.Status, finishedStatus.Value.Trailers);
         }
 
+        protected override bool IsFinishedWithNonOkStatusClientOnly
+        {
+            get { return finishedStatus.HasValue && finishedStatus.Value.Status.StatusCode != StatusCode.OK; }
+        }
+
         protected override Task CheckSendAllowedOrEarlyResult()
         {
             var earlyResult = CheckSendPreconditionsClientSide();
@@ -643,14 +653,20 @@ namespace Grpc.Core.Internal
             if (status.StatusCode != StatusCode.OK)
             {
                 streamingResponseCallFinishedTcs.SetException(new RpcException(status, receivedStatus.Trailers));
-                if (status.StatusCode == StatusCode.Cancelled || origCancelRequested)
-                {
-                    // Make sure the exception set to the Task is observed,
-                    // otherwise this can trigger "Unobserved exception" when the response stream
-                    // is not read until its end and the task created by the TCS is garbage collected.
-                    // See https://github.com/grpc/grpc/issues/17458
-                    var _ = streamingResponseCallFinishedTcs.Task.Exception;
-                }
+                // Make sure the exception set to the Task is observed,
+                // otherwise this can trigger "Unobserved exception" when the response stream
+                // is not read until its end (by invoking MoveNext() until the point where it either returns false or throws an exception)
+                // and the task created by the TCS is garbage collected.
+                // Note that the streamingResponseCallFinishedTcs.Task itself is never exposed to the user
+                // and its result only ever "observed" by MoveNext() implementation:
+                // https://github.com/grpc/grpc/blob/1cd6e69347cbf62a012477fe184ee6fa8f25d32c/src/csharp/Grpc.Core/Internal/ClientResponseStream.cs#L59.
+                // Even though generally the response stream should always be read until the end (since that's how you get streaming call's responses and status code)
+                // there are cases where this shouldn't be strictly required and thus the user
+                // shouldn't need to worry about observing result of an internal task that's
+                // only exposed to them indirectly.
+                // See https://github.com/grpc/grpc/issues/17458
+                // See https://github.com/grpc/grpc/issues/24421
+                var _ = streamingResponseCallFinishedTcs.Task.Exception;
                 return;
             }
 

@@ -36,7 +36,7 @@
 #include "src/core/ext/transport/binder/wire_format/wire_reader_impl.h"
 #include "src/core/ext/transport/binder/wire_format/wire_writer.h"
 #include "src/core/lib/iomgr/exec_ctx.h"
-#include "src/core/lib/slice/slice_utils.h"
+#include "src/core/lib/slice/slice_internal.h"
 #include "src/core/lib/transport/byte_stream.h"
 #include "src/core/lib/transport/error_utils.h"
 #include "src/core/lib/transport/metadata_batch.h"
@@ -96,6 +96,11 @@ static void grpc_binder_unref_transport(grpc_binder_transport* t) {
 #define GRPC_BINDER_UNREF_TRANSPORT(t, r) grpc_binder_unref_transport(t)
 #endif
 
+static void register_stream_locked(void* arg, grpc_error_handle /*error*/) {
+  RegisterStreamArgs* args = static_cast<RegisterStreamArgs*>(arg);
+  args->gbt->registered_stream[args->gbs->GetTxCode()] = args->gbs;
+}
+
 static int init_stream(grpc_transport* gt, grpc_stream* gs,
                        grpc_stream_refcount* refcount, const void* server_data,
                        grpc_core::Arena* arena) {
@@ -107,6 +112,18 @@ static int init_stream(grpc_transport* gt, grpc_stream* gs,
   // here
   new (gs) grpc_binder_stream(t, refcount, server_data, arena,
                               t->NewStreamTxCode(), t->is_client);
+
+  // `grpc_binder_transport::registered_stream` should only be updated in
+  // combiner
+  grpc_binder_stream* gbs = reinterpret_cast<grpc_binder_stream*>(gs);
+  gbs->register_stream_args.gbs = gbs;
+  gbs->register_stream_args.gbt = t;
+  grpc_core::ExecCtx exec_ctx;
+  t->combiner->Run(
+      GRPC_CLOSURE_INIT(&gbs->register_stream_closure, register_stream_locked,
+                        &gbs->register_stream_args, nullptr),
+      GRPC_ERROR_NONE);
+
   return 0;
 }
 
@@ -689,6 +706,7 @@ static grpc_endpoint* get_endpoint(grpc_transport*) {
 static const grpc_transport_vtable vtable = {sizeof(grpc_binder_stream),
                                              "binder",
                                              init_stream,
+                                             nullptr,
                                              set_pollset,
                                              set_pollset_set,
                                              perform_stream_op,

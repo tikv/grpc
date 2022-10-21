@@ -136,6 +136,7 @@ static void on_writable(void* acp, grpc_error_handle error) {
   int done;
   grpc_endpoint** ep = ac->ep;
   grpc_closure* closure = ac->closure;
+  std::string addr_str = ac->addr_str;
   grpc_fd* fd;
 
   (void)GRPC_ERROR_REF(error);
@@ -221,8 +222,7 @@ finish:
     std::string description =
         absl::StrCat("Failed to connect to remote host: ", str);
     error = grpc_error_set_str(error, GRPC_ERROR_STR_DESCRIPTION, description);
-    error =
-        grpc_error_set_str(error, GRPC_ERROR_STR_TARGET_ADDRESS, ac->addr_str);
+    error = grpc_error_set_str(error, GRPC_ERROR_STR_TARGET_ADDRESS, addr_str);
   }
   if (done) {
     // This is safe even outside the lock, because "done", the sentinel, is
@@ -270,7 +270,7 @@ grpc_error_handle grpc_tcp_client_prepare_fd(
 void grpc_tcp_client_create_from_prepared_fd(
     grpc_pollset_set* interested_parties, grpc_closure* closure, const int fd,
     const grpc_channel_args* channel_args, const grpc_resolved_address* addr,
-    grpc_millis deadline, grpc_endpoint** ep) {
+    grpc_core::Timestamp deadline, grpc_endpoint** ep) {
   int err;
   do {
     err = connect(fd, reinterpret_cast<const grpc_sockaddr*>(addr->addr),
@@ -325,7 +325,7 @@ static void tcp_connect(grpc_closure* closure, grpc_endpoint** ep,
                         grpc_pollset_set* interested_parties,
                         const grpc_channel_args* channel_args,
                         const grpc_resolved_address* addr,
-                        grpc_millis deadline) {
+                        grpc_core::Timestamp deadline) {
   grpc_resolved_address mapped_addr;
   int fd = -1;
   grpc_error_handle error;
