@@ -176,7 +176,6 @@ class XdsClusterManagerLb : public LoadBalancingPolicy {
 
     RefCountedPtr<ChildPickerWrapper> picker_wrapper_;
     grpc_connectivity_state connectivity_state_ = GRPC_CHANNEL_IDLE;
-    bool seen_failure_since_ready_ = false;
 
     // States for delayed removal.
     grpc_timer delayed_removal_timer_;
@@ -196,6 +195,7 @@ class XdsClusterManagerLb : public LoadBalancingPolicy {
 
   // Internal state.
   bool shutting_down_ = false;
+  bool update_in_progress_ = false;
 
   // Children.
   std::map<std::string, OrphanablePtr<ClusterChild>> children_;
@@ -254,6 +254,7 @@ void XdsClusterManagerLb::UpdateLocked(UpdateArgs args) {
   if (GRPC_TRACE_FLAG_ENABLED(grpc_xds_cluster_manager_lb_trace)) {
     gpr_log(GPR_INFO, "[xds_cluster_manager_lb %p] Received update", this);
   }
+  update_in_progress_ = true;
   // Update config.
   config_ = std::move(args.config);
   // Deactivate the children not in the new config.
@@ -268,19 +269,24 @@ void XdsClusterManagerLb::UpdateLocked(UpdateArgs args) {
   for (const auto& p : config_->cluster_map()) {
     const std::string& name = p.first;
     const RefCountedPtr<LoadBalancingPolicy::Config>& config = p.second;
-    auto it = children_.find(name);
-    if (it == children_.end()) {
-      it = children_
-               .emplace(name, MakeOrphanable<ClusterChild>(
-                                  Ref(DEBUG_LOCATION, "ClusterChild"), name))
-               .first;
+    auto& child = children_[name];
+    if (child == nullptr) {
+      child = MakeOrphanable<ClusterChild>(Ref(DEBUG_LOCATION, "ClusterChild"),
+                                           name);
     }
-    it->second->UpdateLocked(config, args.addresses, args.args);
+    child->UpdateLocked(config, args.addresses, args.args);
   }
+  update_in_progress_ = false;
   UpdateStateLocked();
 }
 
 void XdsClusterManagerLb::UpdateStateLocked() {
+  // If we're in the process of propagating an update from our parent to
+  // our children, ignore any updates that come from the children.  We
+  // will instead return a new picker once the update has been seen by
+  // all children.  This avoids unnecessary picker churn while an update
+  // is being propagated to our children.
+  if (update_in_progress_) return;
   // Also count the number of children in each state, to determine the
   // overall state.
   size_t num_ready = 0;
@@ -487,7 +493,8 @@ void XdsClusterManagerLb::ClusterChild::DeactivateLocked() {
   Ref(DEBUG_LOCATION, "ClusterChild+timer").release();
   grpc_timer_init(&delayed_removal_timer_,
                   ExecCtx::Get()->Now() +
-                      GRPC_XDS_CLUSTER_MANAGER_CHILD_RETENTION_INTERVAL_MS,
+                      Duration::Milliseconds(
+                          GRPC_XDS_CLUSTER_MANAGER_CHILD_RETENTION_INTERVAL_MS),
                   &on_delayed_removal_timer_);
   delayed_removal_timer_callback_pending_ = true;
 }
@@ -546,19 +553,13 @@ void XdsClusterManagerLb::ClusterChild::Helper::UpdateState(
       MakeRefCounted<ChildPickerWrapper>(xds_cluster_manager_child_->name_,
                                          std::move(picker));
   // Decide what state to report for aggregation purposes.
-  // If we haven't seen a failure since the last time we were in state
-  // READY, then we report the state change as-is.  However, once we do see
-  // a failure, we report TRANSIENT_FAILURE and ignore any subsequent state
-  // changes until we go back into state READY.
-  if (!xds_cluster_manager_child_->seen_failure_since_ready_) {
-    if (state == GRPC_CHANNEL_TRANSIENT_FAILURE) {
-      xds_cluster_manager_child_->seen_failure_since_ready_ = true;
-    }
-  } else {
-    if (state != GRPC_CHANNEL_READY) return;
-    xds_cluster_manager_child_->seen_failure_since_ready_ = false;
+  // If the last recorded state was TRANSIENT_FAILURE and the new state
+  // is something other than READY, don't change the state.
+  if (xds_cluster_manager_child_->connectivity_state_ !=
+          GRPC_CHANNEL_TRANSIENT_FAILURE ||
+      state == GRPC_CHANNEL_READY) {
+    xds_cluster_manager_child_->connectivity_state_ = state;
   }
-  xds_cluster_manager_child_->connectivity_state_ = state;
   // Notify the LB policy.
   xds_cluster_manager_child_->xds_cluster_manager_policy_->UpdateStateLocked();
 }
