@@ -14,13 +14,19 @@
 // limitations under the License.
 //
 
-#ifndef GRPC_CORE_LIB_SECURITY_CREDENTIALS_CHANNEL_CREDS_REGISTRY_H
-#define GRPC_CORE_LIB_SECURITY_CREDENTIALS_CHANNEL_CREDS_REGISTRY_H
+#ifndef GRPC_SRC_CORE_LIB_SECURITY_CREDENTIALS_CHANNEL_CREDS_REGISTRY_H
+#define GRPC_SRC_CORE_LIB_SECURITY_CREDENTIALS_CHANNEL_CREDS_REGISTRY_H
 
 #include <grpc/support/port_platform.h>
 
-#include <grpc/impl/codegen/grpc_types.h>
+#include <map>
+#include <memory>
+#include <string>
+#include <type_traits>
 
+#include "absl/strings/string_view.h"
+
+#include "src/core/lib/gprpp/ref_counted_ptr.h"
 #include "src/core/lib/json/json.h"
 
 struct grpc_channel_credentials;
@@ -94,4 +100,4 @@ class ChannelCredsRegistry {
 
 }  // namespace grpc_core
 
-#endif  // GRPC_CORE_LIB_SECURITY_CREDENTIALS_CHANNEL_CREDS_REGISTRY_H
+#endif  // GRPC_SRC_CORE_LIB_SECURITY_CREDENTIALS_CHANNEL_CREDS_REGISTRY_H

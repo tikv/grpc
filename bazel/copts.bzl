@@ -45,6 +45,7 @@ GRPC_LLVM_WARNING_FLAGS = [
     "-Wtautological-overlap-compare",
     "-Wthread-safety-analysis",
     "-Wthread-safety-beta",
+    "-Wunused-but-set-variable",
     "-Wunused-comparison",
     "-Wvla",
     # -Wextra compatibility between gcc and clang
@@ -57,6 +58,6 @@ GRPC_LLVM_WARNING_FLAGS = [
 ]
 
 GRPC_DEFAULT_COPTS = select({
-    "//:use_strict_warning": GRPC_LLVM_WARNING_FLAGS,
+    "//:use_strict_warning": GRPC_LLVM_WARNING_FLAGS + ["-DUSE_STRICT_WARNING=1"],
     "//conditions:default": [],
 })

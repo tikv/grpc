@@ -57,8 +57,13 @@ _GetServerSocketsResponse = channelz_pb2.GetServerSocketsResponse
 class ChannelzServiceClient(framework.rpc.grpc.GrpcClientHelper):
     stub: channelz_pb2_grpc.ChannelzStub
 
-    def __init__(self, channel: grpc.Channel):
-        super().__init__(channel, channelz_pb2_grpc.ChannelzStub)
+    def __init__(self,
+                 channel: grpc.Channel,
+                 *,
+                 log_target: Optional[str] = ''):
+        super().__init__(channel,
+                         channelz_pb2_grpc.ChannelzStub,
+                         log_target=log_target)
 
     @staticmethod
     def is_sock_tcpip_address(address: Address):
@@ -94,6 +99,22 @@ class ChannelzServiceClient(framework.rpc.grpc.GrpcClientHelper):
             if server_socket.remote == client_socket.local:
                 return server_socket
         return None
+
+    @staticmethod
+    def channel_repr(channel: Channel) -> str:
+        result = f'<Channel channel_id={channel.ref.channel_id}'
+        if channel.data.target:
+            result += f' target={channel.data.target}'
+        result += f' state={ChannelState.Name(channel.data.state.state)}>'
+        return result
+
+    @staticmethod
+    def subchannel_repr(subchannel: Subchannel) -> str:
+        result = f'<Subchannel subchannel_id={subchannel.ref.subchannel_id}'
+        if subchannel.data.target:
+            result += f' target={subchannel.data.target}'
+        result += f' state={ChannelState.Name(subchannel.data.state.state)}>'
+        return result
 
     def find_channels_for_target(self, target: str,
                                  **kwargs) -> Iterator[Channel]:

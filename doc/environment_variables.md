@@ -84,6 +84,8 @@ some configuration as environment variables that can be set.
   - ring_hash_lb - traces the ring hash load balancing policy
   - rls_lb - traces the RLS load balancing policy
   - round_robin - traces the round_robin load balancing policy
+  - weighted_round_robin_lb - traces the weighted_round_robin load balancing
+    policy
   - queue_pluck
   - grpc_authz_api - traces gRPC authorization
   - server_channel - lightweight trace of significant server channel events
@@ -116,6 +118,7 @@ some configuration as environment variables that can be set.
   - queue_refcount
   - error_refcount
   - stream_refcount
+  - slice_refcount
   - workqueue_refcount
   - fd_refcount
   - cq_refcount
@@ -159,6 +162,11 @@ some configuration as environment variables that can be set.
   - native - a DNS resolver based around getaddrinfo(), creates a new thread to
     perform name resolution
 
+  *NetBIOS and DNS*: If your network relies on NetBIOS name resolution or a mixture of
+  DNS and NetBIOS name resolution (e.g. in some Windows networks) then you should use
+  the '*native*' DNS resolver or make sure all NetBIOS names are
+  also configured in DNS. The '*ares*' DNS resolver only supports DNS name resolution.
+
 * GRPC_CLIENT_CHANNEL_BACKUP_POLL_INTERVAL_MS
   Default: 5000
   Declares the interval between two backup polls on client channels. These polls
@@ -166,11 +174,6 @@ some configuration as environment variables that can be set.
   there is no active polling thread. They help reconnect disconnected client
   channels (mostly due to idleness), so that the next RPC on this channel won't
   fail. Set to 0 to turn off the backup polls.
-
-* GRPC_EXPERIMENTAL_DISABLE_FLOW_CONTROL
-  if set, flow control will be effectively disabled. Max out all values and
-  assume the remote peer does the same. Thus we can ignore any flow control
-  bookkeeping, error checking, and decision making
 
 * grpc_cfstream
   set to 1 to turn on CFStream experiment. With this experiment gRPC uses CFStream API to make TCP

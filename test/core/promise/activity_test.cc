@@ -14,10 +14,16 @@
 
 #include "src/core/lib/promise/activity.h"
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
+#include <stdlib.h>
+
+#include <functional>
+#include <tuple>
+
+#include "gmock/gmock.h"
+#include "gtest/gtest.h"
 
 #include "src/core/lib/promise/join.h"
+#include "src/core/lib/promise/poll.h"
 #include "src/core/lib/promise/promise.h"
 #include "src/core/lib/promise/seq.h"
 #include "src/core/lib/promise/wait_set.h"
@@ -38,7 +44,7 @@ class Barrier {
 
   Promise<Result> Wait() {
     return [this]() -> Poll<Result> {
-      absl::MutexLock lock(&mu_);
+      MutexLock lock(&mu_);
       if (cleared_) {
         return Result{};
       } else {
@@ -56,7 +62,7 @@ class Barrier {
   }
 
  private:
-  absl::Mutex mu_;
+  Mutex mu_;
   WaitSet wait_set_ ABSL_GUARDED_BY(mu_);
   bool cleared_ ABSL_GUARDED_BY(mu_) = false;
 };
@@ -69,7 +75,7 @@ class SingleBarrier {
 
   Promise<Result> Wait() {
     return [this]() -> Poll<Result> {
-      absl::MutexLock lock(&mu_);
+      MutexLock lock(&mu_);
       if (cleared_) {
         return Result{};
       } else {
@@ -88,7 +94,7 @@ class SingleBarrier {
   }
 
  private:
-  absl::Mutex mu_;
+  Mutex mu_;
   Waker waker_ ABSL_GUARDED_BY(mu_);
   bool cleared_ ABSL_GUARDED_BY(mu_) = false;
 };
@@ -119,12 +125,12 @@ TEST(ActivityTest, DropImmediately) {
 }
 
 template <typename B>
-class BarrierTest : public testing::Test {
+class BarrierTest : public ::testing::Test {
  public:
   using Type = B;
 };
 
-using BarrierTestTypes = testing::Types<Barrier, SingleBarrier>;
+using BarrierTestTypes = ::testing::Types<Barrier, SingleBarrier>;
 TYPED_TEST_SUITE(BarrierTest, BarrierTestTypes);
 
 TYPED_TEST(BarrierTest, Barrier) {

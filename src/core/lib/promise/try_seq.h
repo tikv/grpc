@@ -12,19 +12,20 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef GRPC_CORE_LIB_PROMISE_TRY_SEQ_H
-#define GRPC_CORE_LIB_PROMISE_TRY_SEQ_H
+#ifndef GRPC_SRC_CORE_LIB_PROMISE_TRY_SEQ_H
+#define GRPC_SRC_CORE_LIB_PROMISE_TRY_SEQ_H
 
 #include <grpc/support/port_platform.h>
 
-#include <tuple>
+#include <type_traits>
 #include <utility>
 
+#include "absl/meta/type_traits.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
-#include "absl/types/variant.h"
 
 #include "src/core/lib/promise/detail/basic_seq.h"
+#include "src/core/lib/promise/detail/promise_like.h"
 #include "src/core/lib/promise/detail/status.h"
 #include "src/core/lib/promise/poll.h"
 
@@ -37,9 +38,8 @@ struct TrySeqTraitsWithSfinae {
   using UnwrappedType = T;
   using WrappedType = absl::StatusOr<T>;
   template <typename Next>
-  static auto CallFactory(Next* next, T&& value)
-      -> decltype(next->Once(std::forward<T>(value))) {
-    return next->Once(std::forward<T>(value));
+  static auto CallFactory(Next* next, T&& value) {
+    return next->Make(std::forward<T>(value));
   }
   template <typename F, typename Elem>
   static auto CallSeqFactory(F& f, Elem&& elem, T&& value)
@@ -57,9 +57,8 @@ struct TrySeqTraitsWithSfinae<absl::StatusOr<T>> {
   using UnwrappedType = T;
   using WrappedType = absl::StatusOr<T>;
   template <typename Next>
-  static auto CallFactory(Next* next, absl::StatusOr<T>&& status)
-      -> decltype(next->Once(std::move(*status))) {
-    return next->Once(std::move(*status));
+  static auto CallFactory(Next* next, absl::StatusOr<T>&& status) {
+    return next->Make(std::move(*status));
   }
   template <typename F, typename Elem>
   static auto CallSeqFactory(F& f, Elem&& elem, absl::StatusOr<T> value)
@@ -69,7 +68,7 @@ struct TrySeqTraitsWithSfinae<absl::StatusOr<T>> {
   template <typename Result, typename RunNext>
   static Poll<Result> CheckResultAndRunNext(absl::StatusOr<T> prior,
                                             RunNext run_next) {
-    if (!prior.ok()) return Result(prior.status());
+    if (!prior.ok()) return StatusCast<Result>(prior.status());
     return run_next(std::move(prior));
   }
 };
@@ -84,8 +83,8 @@ struct TrySeqTraitsWithSfinae<
   using UnwrappedType = void;
   using WrappedType = T;
   template <typename Next>
-  static auto CallFactory(Next* next, T&&) -> decltype(next->Once()) {
-    return next->Once();
+  static auto CallFactory(Next* next, T&&) {
+    return next->Make();
   }
   template <typename Result, typename RunNext>
   static Poll<Result> CheckResultAndRunNext(T prior, RunNext run_next) {
@@ -98,14 +97,13 @@ struct TrySeqTraitsWithSfinae<absl::Status> {
   using UnwrappedType = void;
   using WrappedType = absl::Status;
   template <typename Next>
-  static auto CallFactory(Next* next, absl::Status&&)
-      -> decltype(next->Once()) {
-    return next->Once();
+  static auto CallFactory(Next* next, absl::Status&&) {
+    return next->Make();
   }
   template <typename Result, typename RunNext>
   static Poll<Result> CheckResultAndRunNext(absl::Status prior,
                                             RunNext run_next) {
-    if (!prior.ok()) return Result(std::move(prior));
+    if (!prior.ok()) return StatusCast<Result>(std::move(prior));
     return run_next(std::move(prior));
   }
 };
@@ -115,6 +113,26 @@ using TrySeqTraits = TrySeqTraitsWithSfinae<T>;
 
 template <typename... Fs>
 using TrySeq = BasicSeq<TrySeqTraits, Fs...>;
+
+template <typename I, typename F, typename Arg>
+struct TrySeqIterTraits {
+  using Iter = I;
+  using Factory = F;
+  using Argument = Arg;
+  using IterValue = decltype(*std::declval<Iter>());
+  using StateCreated = decltype(std::declval<F>()(std::declval<IterValue>(),
+                                                  std::declval<Arg>()));
+  using State = PromiseLike<StateCreated>;
+  using Wrapped = typename State::Result;
+
+  using Traits = TrySeqTraits<Wrapped>;
+};
+
+template <typename Iter, typename Factory, typename Argument>
+struct TrySeqIterResultTraits {
+  using IterTraits = TrySeqIterTraits<Iter, Factory, Argument>;
+  using Result = BasicSeqIter<IterTraits>;
+};
 
 }  // namespace promise_detail
 
@@ -144,14 +162,14 @@ promise_detail::TrySeq<Functors...> TrySeq(Functors... functors) {
 //   }
 //   return argument;
 template <typename Iter, typename Factory, typename Argument>
-promise_detail::BasicSeqIter<promise_detail::TrySeqTraits, Factory, Argument,
-                             Iter>
+typename promise_detail::TrySeqIterResultTraits<Iter, Factory, Argument>::Result
 TrySeqIter(Iter begin, Iter end, Argument argument, Factory factory) {
-  return promise_detail::BasicSeqIter<promise_detail::TrySeqTraits, Factory,
-                                      Argument, Iter>(
-      begin, end, std::move(factory), std::move(argument));
+  using Result =
+      typename promise_detail::TrySeqIterResultTraits<Iter, Factory,
+                                                      Argument>::Result;
+  return Result(begin, end, std::move(factory), std::move(argument));
 }
 
 }  // namespace grpc_core
 
-#endif  // GRPC_CORE_LIB_PROMISE_TRY_SEQ_H
+#endif  // GRPC_SRC_CORE_LIB_PROMISE_TRY_SEQ_H

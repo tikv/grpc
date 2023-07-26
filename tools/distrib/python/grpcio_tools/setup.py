@@ -88,7 +88,7 @@ def check_linker_need_libatomic():
     code_test = (b'#include <atomic>\n' +
                  b'int main() { return std::atomic<int64_t>{}; }')
     cxx = os.environ.get('CXX', 'c++')
-    cpp_test = subprocess.Popen([cxx, '-x', 'c++', '-std=c++11', '-'],
+    cpp_test = subprocess.Popen([cxx, '-x', 'c++', '-std=c++14', '-'],
                                 stdin=PIPE,
                                 stdout=PIPE,
                                 stderr=PIPE)
@@ -98,7 +98,7 @@ def check_linker_need_libatomic():
     # Double-check to see if -latomic actually can solve the problem.
     # https://github.com/grpc/grpc/issues/22491
     cpp_test = subprocess.Popen(
-        [cxx, '-x', 'c++', '-std=c++11', '-', '-latomic'],
+        [cxx, '-x', 'c++', '-std=c++14', '-', '-latomic'],
         stdin=PIPE,
         stdout=PIPE,
         stderr=PIPE)
@@ -134,7 +134,7 @@ class BuildExt(build_ext.build_ext):
 EXTRA_ENV_COMPILE_ARGS = os.environ.get('GRPC_PYTHON_CFLAGS', None)
 EXTRA_ENV_LINK_ARGS = os.environ.get('GRPC_PYTHON_LDFLAGS', None)
 if EXTRA_ENV_COMPILE_ARGS is None:
-    EXTRA_ENV_COMPILE_ARGS = '-std=c++11'
+    EXTRA_ENV_COMPILE_ARGS = '-std=c++14'
     if 'win32' in sys.platform:
         if sys.version_info < (3, 5):
             # We use define flags here and don't directly add to DEFINE_MACROS below to
@@ -195,7 +195,9 @@ CC_FILES = [os.path.normpath(cc_file) for cc_file in protoc_lib_deps.CC_FILES]
 PROTO_FILES = [
     os.path.normpath(proto_file) for proto_file in protoc_lib_deps.PROTO_FILES
 ]
-CC_INCLUDE = os.path.normpath(protoc_lib_deps.CC_INCLUDE)
+CC_INCLUDES = [
+    os.path.normpath(include_dir) for include_dir in protoc_lib_deps.CC_INCLUDES
+]
 PROTO_INCLUDE = os.path.normpath(protoc_lib_deps.PROTO_INCLUDE)
 
 GRPC_PYTHON_TOOLS_PACKAGE = 'grpc_tools'
@@ -203,7 +205,11 @@ GRPC_PYTHON_PROTO_RESOURCES_NAME = '_proto'
 
 DEFINE_MACROS = ()
 if "win32" in sys.platform:
-    DEFINE_MACROS += (('WIN32_LEAN_AND_MEAN', 1),)
+    DEFINE_MACROS += (
+        ('WIN32_LEAN_AND_MEAN', 1),
+        # avoid https://github.com/abseil/abseil-cpp/issues/1425
+        ('NOMINMAX', 1),
+    )
     if '64bit' in platform.architecture()[0]:
         DEFINE_MACROS += (('MS_WIN64', 1),)
 elif "linux" in sys.platform or "darwin" in sys.platform:
@@ -252,8 +258,9 @@ def extension_modules():
 
     plugin_sources += [
         os.path.join('grpc_tools', 'main.cc'),
-        os.path.join('grpc_root', 'src', 'compiler', 'python_generator.cc')
-    ] + [os.path.join(CC_INCLUDE, cc_file) for cc_file in CC_FILES]
+        os.path.join('grpc_root', 'src', 'compiler', 'python_generator.cc'),
+        os.path.join('grpc_root', 'src', 'compiler', 'proto_parser_helper.cc')
+    ] + CC_FILES
 
     plugin_ext = extension.Extension(
         name='grpc_tools._protoc_compiler',
@@ -262,8 +269,7 @@ def extension_modules():
             '.',
             'grpc_root',
             os.path.join('grpc_root', 'include'),
-            CC_INCLUDE,
-        ],
+        ] + CC_INCLUDES,
         language='c++',
         define_macros=list(DEFINE_MACROS),
         extra_compile_args=list(EXTRA_COMPILE_ARGS),
@@ -277,24 +283,32 @@ def extension_modules():
         return extensions
 
 
-setuptools.setup(name='grpcio-tools',
-                 version=grpc_version.VERSION,
-                 description='Protobuf code generator for gRPC',
-                 long_description=open(_README_PATH, 'r').read(),
-                 author='The gRPC Authors',
-                 author_email='grpc-io@googlegroups.com',
-                 url='https://grpc.io',
-                 license='Apache License 2.0',
-                 classifiers=CLASSIFIERS,
-                 ext_modules=extension_modules(),
-                 packages=setuptools.find_packages('.'),
-                 python_requires='>=3.6',
-                 install_requires=[
-                     'protobuf>=3.12.0, < 4.0dev',
-                     'grpcio>={version}'.format(version=grpc_version.VERSION),
-                     'setuptools',
-                 ],
-                 package_data=package_data(),
-                 cmdclass={
-                     'build_ext': BuildExt,
-                 })
+setuptools.setup(
+    name='grpcio-tools',
+    version=grpc_version.VERSION,
+    description='Protobuf code generator for gRPC',
+    long_description_content_type='text/x-rst',
+    long_description=open(_README_PATH, 'r').read(),
+    author='The gRPC Authors',
+    author_email='grpc-io@googlegroups.com',
+    url='https://grpc.io',
+    project_urls={
+        "Source Code":
+            "https://github.com/grpc/grpc/tree/master/tools/distrib/python/grpcio_tools",
+        "Bug Tracker":
+            "https://github.com/grpc/grpc/issues",
+    },
+    license='Apache License 2.0',
+    classifiers=CLASSIFIERS,
+    ext_modules=extension_modules(),
+    packages=setuptools.find_packages('.'),
+    python_requires='>=3.7',
+    install_requires=[
+        'protobuf>=4.21.6,<5.0dev',
+        'grpcio>={version}'.format(version=grpc_version.VERSION),
+        'setuptools',
+    ],
+    package_data=package_data(),
+    cmdclass={
+        'build_ext': BuildExt,
+    })

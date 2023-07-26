@@ -12,8 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef GRPC_CORE_LIB_PROMISE_DETAIL_BASIC_SEQ_H
-#define GRPC_CORE_LIB_PROMISE_DETAIL_BASIC_SEQ_H
+#ifndef GRPC_SRC_CORE_LIB_PROMISE_DETAIL_BASIC_SEQ_H
+#define GRPC_SRC_CORE_LIB_PROMISE_DETAIL_BASIC_SEQ_H
 
 #include <grpc/support/port_platform.h>
 
@@ -24,18 +24,16 @@
 #include <utility>
 
 #include "absl/meta/type_traits.h"
-#include "absl/types/variant.h"
 #include "absl/utility/utility.h"
 
 #include "src/core/lib/gprpp/construct_destruct.h"
 #include "src/core/lib/promise/detail/promise_factory.h"
+#include "src/core/lib/promise/detail/promise_like.h"
 #include "src/core/lib/promise/detail/switch.h"
 #include "src/core/lib/promise/poll.h"
 
 namespace grpc_core {
 namespace promise_detail {
-template <typename F>
-class PromiseLike;
 
 // Helper for SeqState to evaluate some common types to all partial
 // specializations.
@@ -50,7 +48,7 @@ struct SeqStateTypes {
   // Wrap the factory callable in our factory wrapper to deal with common edge
   // cases. We use the 'unwrapped type' from the traits, so for instance, TrySeq
   // can pass back a T from a StatusOr<T>.
-  using Next = promise_detail::PromiseFactory<
+  using Next = promise_detail::OncePromiseFactory<
       typename PromiseResultTraits::UnwrappedType, FNext>;
 };
 
@@ -169,7 +167,7 @@ auto CallNext(SeqState<Traits, I, Fs...>* state, T&& arg)
       &state->next_factory, std::forward<T>(arg));
 }
 
-// A sequence under stome traits for some set of callables Fs.
+// A sequence under some traits for some set of callables Fs.
 // Fs[0] should be a promise-like object that yields a value.
 // Fs[1..] should be promise-factory-like objects that take the value from the
 // previous step and yield a promise. Note that most of the machinery in
@@ -277,18 +275,15 @@ class BasicSeq {
     // Poll the current promise in this state.
     auto r = s->current_promise();
     // If we are still pending, say so by returning.
-    if (absl::holds_alternative<Pending>(r)) {
-      return Pending();
-    }
+    if (r.pending()) return Pending();
     // Current promise is ready, as the traits to do the next thing.
     // That may be returning - eg if TrySeq sees an error.
     // Or it may be by calling the callable we hand down - RunNext - which
     // will advance the state and call the next promise.
     return Traits<
         typename absl::remove_reference_t<decltype(*s)>::Types::PromiseResult>::
-        template CheckResultAndRunNext<Result>(
-            std::move(absl::get<kPollReadyIdx>(std::move(r))),
-            RunNext<I>{this});
+        template CheckResultAndRunNext<Result>(std::move(r.value()),
+                                               RunNext<I>{this});
   }
 
   // Specialization of RunState to run the final state.
@@ -297,11 +292,9 @@ class BasicSeq {
     // Poll the final promise.
     auto r = final_promise_();
     // If we are still pending, say so by returning.
-    if (absl::holds_alternative<Pending>(r)) {
-      return Pending();
-    }
+    if (r.pending()) return Pending();
     // We are complete, return the (wrapped) result.
-    return Result(std::move(absl::get<kPollReadyIdx>(std::move(r))));
+    return Result(std::move(r.value()));
   }
 
   // For state numbered I, destruct the current promise and the next promise
@@ -403,20 +396,22 @@ class BasicSeq {
 
 // As above, but models a sequence of unknown size
 // At each element, the accumulator A and the current value V is passed to some
-// function of type F as f(V, A); f is expected to return a promise that
-// resolves to Traits::WrappedType.
-template <template <typename Wrapped> class Traits, typename F, typename Arg,
-          typename Iter>
+// function of type IterTraits::Factory as f(V, IterTraits::Argument); f is
+// expected to return a promise that resolves to IterTraits::Wrapped.
+template <class IterTraits>
 class BasicSeqIter {
  private:
-  using IterValue = decltype(*std::declval<Iter>());
-  using StateCreated = decltype(std::declval<F>()(std::declval<IterValue>(),
-                                                  std::declval<Arg>()));
-  using State = PromiseLike<StateCreated>;
-  using Wrapped = typename State::Result;
+  using Traits = typename IterTraits::Traits;
+  using Iter = typename IterTraits::Iter;
+  using Factory = typename IterTraits::Factory;
+  using Argument = typename IterTraits::Argument;
+  using IterValue = typename IterTraits::IterValue;
+  using StateCreated = typename IterTraits::StateCreated;
+  using State = typename IterTraits::State;
+  using Wrapped = typename IterTraits::Wrapped;
 
  public:
-  BasicSeqIter(Iter begin, Iter end, F f, Arg arg)
+  BasicSeqIter(Iter begin, Iter end, Factory f, Argument arg)
       : cur_(begin), end_(end), f_(std::move(f)) {
     if (cur_ == end_) {
       Construct(&result_, std::move(arg));
@@ -465,9 +460,9 @@ class BasicSeqIter {
  private:
   Poll<Wrapped> PollNonEmpty() {
     Poll<Wrapped> r = state_();
-    if (absl::holds_alternative<Pending>(r)) return r;
-    return Traits<Wrapped>::template CheckResultAndRunNext<Wrapped>(
-        std::move(absl::get<Wrapped>(r)), [this](Wrapped arg) -> Poll<Wrapped> {
+    if (r.pending()) return r;
+    return Traits::template CheckResultAndRunNext<Wrapped>(
+        std::move(r.value()), [this](Wrapped arg) -> Poll<Wrapped> {
           auto next = cur_;
           ++next;
           if (next == end_) {
@@ -476,21 +471,21 @@ class BasicSeqIter {
           cur_ = next;
           state_.~State();
           Construct(&state_,
-                    Traits<Wrapped>::CallSeqFactory(f_, *cur_, std::move(arg)));
+                    Traits::template CallSeqFactory(f_, *cur_, std::move(arg)));
           return PollNonEmpty();
         });
   }
 
   Iter cur_;
   const Iter end_;
-  GPR_NO_UNIQUE_ADDRESS F f_;
+  GPR_NO_UNIQUE_ADDRESS Factory f_;
   union {
     GPR_NO_UNIQUE_ADDRESS State state_;
-    GPR_NO_UNIQUE_ADDRESS Arg result_;
+    GPR_NO_UNIQUE_ADDRESS Argument result_;
   };
 };
 
 }  // namespace promise_detail
 }  // namespace grpc_core
 
-#endif  // GRPC_CORE_LIB_PROMISE_DETAIL_BASIC_SEQ_H
+#endif  // GRPC_SRC_CORE_LIB_PROMISE_DETAIL_BASIC_SEQ_H
