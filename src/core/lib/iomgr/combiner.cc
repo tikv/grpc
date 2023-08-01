@@ -1,20 +1,20 @@
-/*
- *
- * Copyright 2016 gRPC authors.
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- *
- */
+//
+//
+// Copyright 2016 gRPC authors.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+//
+//
 
 #include <grpc/support/port_platform.h>
 
@@ -27,6 +27,7 @@
 #include <grpc/support/alloc.h>
 #include <grpc/support/log.h>
 
+#include "src/core/lib/gprpp/crash.h"
 #include "src/core/lib/gprpp/mpscq.h"
 #include "src/core/lib/iomgr/executor.h"
 #include "src/core/lib/iomgr/iomgr_internal.h"
@@ -149,11 +150,7 @@ static void combiner_exec(grpc_core::Combiner* lock, grpc_closure* cl,
   }
   GPR_ASSERT(last & STATE_UNORPHANED);  // ensure lock has not been destroyed
   assert(cl->cb);
-#ifdef GRPC_ERROR_IS_ABSEIL_STATUS
   cl->error_data.error = grpc_core::internal::StatusAllocHeapPtr(error);
-#else
-  cl->error_data.error = reinterpret_cast<intptr_t>(error);
-#endif
   lock->queue.Push(cl->next_data.mpscq_node.get());
 }
 
@@ -175,7 +172,7 @@ static void offload(void* arg, grpc_error_handle /*error*/) {
 static void queue_offload(grpc_core::Combiner* lock) {
   move_next();
   GRPC_COMBINER_TRACE(gpr_log(GPR_INFO, "C:%p queue_offload", lock));
-  grpc_core::Executor::Run(&lock->offload, GRPC_ERROR_NONE);
+  grpc_core::Executor::Run(&lock->offload, absl::OkStatus());
 }
 
 bool grpc_combiner_continue_exec_ctx() {
@@ -228,18 +225,10 @@ bool grpc_combiner_continue_exec_ctx() {
 #ifndef NDEBUG
     cl->scheduled = false;
 #endif
-#ifdef GRPC_ERROR_IS_ABSEIL_STATUS
     grpc_error_handle cl_err =
         grpc_core::internal::StatusMoveFromHeapPtr(cl->error_data.error);
     cl->error_data.error = 0;
     cl->cb(cl->cb_arg, std::move(cl_err));
-#else
-    grpc_error_handle cl_err =
-        reinterpret_cast<grpc_error_handle>(cl->error_data.error);
-    cl->error_data.error = 0;
-    cl->cb(cl->cb_arg, cl_err);
-    GRPC_ERROR_UNREF(cl_err);
-#endif
   } else {
     grpc_closure* c = lock->final_list.head;
     GPR_ASSERT(c != nullptr);
@@ -252,18 +241,10 @@ bool grpc_combiner_continue_exec_ctx() {
 #ifndef NDEBUG
       c->scheduled = false;
 #endif
-#ifdef GRPC_ERROR_IS_ABSEIL_STATUS
       grpc_error_handle error =
           grpc_core::internal::StatusMoveFromHeapPtr(c->error_data.error);
       c->error_data.error = 0;
       c->cb(c->cb_arg, std::move(error));
-#else
-      grpc_error_handle error =
-          reinterpret_cast<grpc_error_handle>(c->error_data.error);
-      c->error_data.error = 0;
-      c->cb(c->cb_arg, error);
-      GRPC_ERROR_UNREF(error);
-#endif
       c = next;
     }
   }
@@ -336,7 +317,7 @@ static void enqueue_finally(void* closure, grpc_error_handle error) {
   grpc_core::Combiner* lock =
       reinterpret_cast<grpc_core::Combiner*>(cl->error_data.scratch);
   cl->error_data.scratch = 0;
-  combiner_finally_exec(lock, cl, GRPC_ERROR_REF(error));
+  combiner_finally_exec(lock, cl, error);
 }
 
 namespace grpc_core {

@@ -1,20 +1,20 @@
-/*
- *
- * Copyright 2018 gRPC authors.
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- *
- */
+//
+//
+// Copyright 2018 gRPC authors.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+//
+//
 
 #include <grpc/support/port_platform.h>
 
@@ -30,6 +30,9 @@
 #include <grpcpp/ext/server_load_reporting.h>
 #include <grpcpp/server_builder.h>
 
+#include "src/core/ext/filters/client_channel/backup_poller.h"
+#include "src/core/lib/config/config_vars.h"
+#include "src/core/lib/gprpp/crash.h"
 #include "src/proto/grpc/lb/v1/load_reporter.grpc.pb.h"
 #include "src/proto/grpc/testing/echo.grpc.pb.h"
 #include "test/core/util/port.h"
@@ -142,41 +145,52 @@ TEST_F(ServerLoadReportingEnd2endTest, BasicReport) {
   const std::string& lb_id = response.initial_response().load_balancer_id();
   gpr_log(GPR_INFO, "Initial response received (lb_id: %s).", lb_id.c_str());
   ClientMakeEchoCalls(lb_id, "LB_TAG", kOkMessage, 1);
-  while (true) {
+
+  unsigned load_count = 0;
+  bool got_in_progress = false;
+  bool got_orphaned = false;
+  bool got_calls = false;
+  while (load_count < 3) {
     stream->Read(&response);
-    if (!response.load().empty()) {
-      ASSERT_EQ(response.load().size(), 3) << response.DebugString();
-      for (const auto& load : response.load()) {
-        if (load.in_progress_report_case()) {
-          // The special load record that reports the number of in-progress
-          // calls.
-          ASSERT_EQ(load.num_calls_in_progress(), 1);
-        } else if (load.orphaned_load_case()) {
-          // The call from the balancer doesn't have any valid LB token.
-          ASSERT_EQ(load.orphaned_load_case(), load.kLoadKeyUnknown);
-          ASSERT_EQ(load.num_calls_started(), 1);
-          ASSERT_EQ(load.num_calls_finished_without_error(), 0);
-          ASSERT_EQ(load.num_calls_finished_with_error(), 0);
-        } else {
-          // This corresponds to the calls from the client.
-          ASSERT_EQ(load.num_calls_started(), 1);
-          ASSERT_EQ(load.num_calls_finished_without_error(), 1);
-          ASSERT_EQ(load.num_calls_finished_with_error(), 0);
-          ASSERT_GE(load.total_bytes_received(), sizeof(kOkMessage));
-          ASSERT_GE(load.total_bytes_sent(), sizeof(kOkMessage));
-          ASSERT_EQ(load.metric_data().size(), 1);
-          ASSERT_EQ(load.metric_data().Get(0).metric_name(), kMetricName);
-          ASSERT_EQ(load.metric_data().Get(0).num_calls_finished_with_metric(),
-                    1);
-          ASSERT_EQ(load.metric_data().Get(0).total_metric_value(),
-                    kMetricValue);
-        }
+    for (const auto& load : response.load()) {
+      load_count++;
+      if (load.in_progress_report_case()) {
+        // The special load record that reports the number of in-progress
+        // calls.
+        EXPECT_EQ(load.num_calls_in_progress(), 1);
+        EXPECT_FALSE(got_in_progress);
+        got_in_progress = true;
+      } else if (load.orphaned_load_case()) {
+        // The call from the balancer doesn't have any valid LB token.
+        EXPECT_EQ(load.orphaned_load_case(), load.kLoadKeyUnknown);
+        EXPECT_EQ(load.num_calls_started(), 1);
+        EXPECT_EQ(load.num_calls_finished_without_error(), 0);
+        EXPECT_EQ(load.num_calls_finished_with_error(), 0);
+        EXPECT_FALSE(got_orphaned);
+        got_orphaned = true;
+      } else {
+        // This corresponds to the calls from the client.
+        EXPECT_EQ(load.num_calls_started(), 1);
+        EXPECT_EQ(load.num_calls_finished_without_error(), 1);
+        EXPECT_EQ(load.num_calls_finished_with_error(), 0);
+        EXPECT_GE(load.total_bytes_received(), sizeof(kOkMessage));
+        EXPECT_GE(load.total_bytes_sent(), sizeof(kOkMessage));
+        EXPECT_EQ(load.metric_data().size(), 1);
+        EXPECT_EQ(load.metric_data().Get(0).metric_name(), kMetricName);
+        EXPECT_EQ(load.metric_data().Get(0).num_calls_finished_with_metric(),
+                  1);
+        EXPECT_EQ(load.metric_data().Get(0).total_metric_value(), kMetricValue);
+        EXPECT_FALSE(got_calls);
+        got_calls = true;
       }
-      break;
     }
   }
+  EXPECT_EQ(load_count, 3);
+  EXPECT_TRUE(got_in_progress);
+  EXPECT_TRUE(got_orphaned);
+  EXPECT_TRUE(got_calls);
   stream->WritesDone();
-  ASSERT_EQ(stream->Finish().error_code(), StatusCode::CANCELLED);
+  EXPECT_EQ(stream->Finish().error_code(), StatusCode::CANCELLED);
 }
 
 // TODO(juanlishen): Add more tests.
@@ -188,5 +202,10 @@ TEST_F(ServerLoadReportingEnd2endTest, BasicReport) {
 int main(int argc, char** argv) {
   grpc::testing::TestEnvironment env(&argc, argv);
   ::testing::InitGoogleTest(&argc, argv);
+  // Make the backup poller poll very frequently in order to pick up
+  // updates from all the subchannels's FDs.
+  grpc_core::ConfigVars::Overrides config_overrides;
+  config_overrides.client_channel_backup_poll_interval_ms = 1;
+  grpc_core::ConfigVars::SetOverrides(config_overrides);
   return RUN_ALL_TESTS();
 }

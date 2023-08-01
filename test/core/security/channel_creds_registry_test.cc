@@ -24,7 +24,6 @@
 #include <grpc/grpc.h>
 
 #include "src/core/lib/config/core_configuration.h"
-#include "src/core/lib/security/credentials/channel_creds_registry.h"
 #include "src/core/lib/security/credentials/fake/fake_credentials.h"
 #include "test/core/util/test_config.h"
 
@@ -43,7 +42,15 @@ class TestChannelCredsFactory : public ChannelCredsFactory<> {
   }
 };
 
-TEST(ChannelCredsRegistry2Test, DefaultCreds) {
+class ChannelCredsRegistryTest : public ::testing::Test {
+ protected:
+  void SetUp() override {
+    CoreConfiguration::Reset();
+    grpc_init();
+  }
+};
+
+TEST_F(ChannelCredsRegistryTest, DefaultCreds) {
   // Default creds.
   EXPECT_TRUE(CoreConfiguration::Get().channel_creds_registry().IsSupported(
       "google_default"));
@@ -63,10 +70,7 @@ TEST(ChannelCredsRegistry2Test, DefaultCreds) {
       nullptr);
 }
 
-TEST(ChannelCredsRegistry2Test, Register) {
-  CoreConfiguration::Reset();
-  grpc_init();
-
+TEST_F(ChannelCredsRegistryTest, Register) {
   // Before registration.
   EXPECT_FALSE(
       CoreConfiguration::Get().channel_creds_registry().IsSupported("test"));
@@ -76,11 +80,11 @@ TEST(ChannelCredsRegistry2Test, Register) {
       nullptr);
 
   // Registration.
-  CoreConfiguration::BuildSpecialConfiguration(
+  CoreConfiguration::WithSubstituteBuilder builder(
       [](CoreConfiguration::Builder* builder) {
         BuildCoreConfiguration(builder);
         builder->channel_creds_registry()->RegisterChannelCredsFactory(
-            absl::make_unique<TestChannelCredsFactory>());
+            std::make_unique<TestChannelCredsFactory>());
       });
 
   RefCountedPtr<grpc_channel_credentials> test_cred(

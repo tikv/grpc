@@ -23,9 +23,12 @@ import sys
 
 
 def build_valid_guard(fpath):
-    prefix = 'GRPC_' if not fpath.startswith('include/') else ''
-    return prefix + '_'.join(
-        fpath.replace('++', 'XX').replace('.', '_').upper().split('/')[1:])
+    guard_components = fpath.replace('++', 'XX').replace('.',
+                                                         '_').upper().split('/')
+    if fpath.startswith('include/'):
+        return '_'.join(guard_components[1:])
+    else:
+        return 'GRPC_' + '_'.join(guard_components)
 
 
 def load(fpath):
@@ -41,16 +44,21 @@ def save(fpath, contents):
 class GuardValidator(object):
 
     def __init__(self):
-        self.ifndef_re = re.compile(r'#ifndef ([A-Z][A-Z_1-9]*)')
-        self.define_re = re.compile(r'#define ([A-Z][A-Z_1-9]*)')
+        self.ifndef_re = re.compile(r'#ifndef ([A-Z][A-Z_0-9]*)')
+        self.define_re = re.compile(r'#define ([A-Z][A-Z_0-9]*)')
         self.endif_c_core_re = re.compile(
-            r'#endif /\* (?: *\\\n *)?([A-Z][A-Z_1-9]*) (?:\\\n *)?\*/$')
-        self.endif_re = re.compile(r'#endif  // ([A-Z][A-Z_1-9]*)')
+            r'#endif /\* (?: *\\\n *)?([A-Z][A-Z_0-9]*) (?:\\\n *)?\*/$')
+        self.endif_re = re.compile(r'#endif  // ([A-Z][A-Z_0-9]*)')
+        self.comments_then_includes_re = re.compile(
+            r'^((//.*?$|/\*.*?\*/|[ \r\n\t])*)(([ \r\n\t]|#include .*)*)(#ifndef [^\n]*\n#define [^\n]*\n)',
+            re.DOTALL | re.MULTILINE)
         self.failed = False
 
     def _is_c_core_header(self, fpath):
-        return 'include' in fpath and not ('grpc++' in fpath or 'grpcpp'
-                                           in fpath or 'event_engine' in fpath)
+        return 'include' in fpath and not (
+            'grpc++' in fpath or 'grpcpp' in fpath or 'event_engine' in fpath or
+            fpath.endswith('/grpc_audit_logging.h') or
+            fpath.endswith('/json.h'))
 
     def fail(self, fpath, regexp, fcontents, match_txt, correct, fix):
         c_core_header = self._is_c_core_header(fpath)
@@ -129,9 +137,11 @@ class GuardValidator(object):
 
         # Is there a properly commented #endif?
         flines = fcontents.rstrip().splitlines()
-        match = self.endif_c_core_re.search('\n'.join(flines[-3:]))
+        # Use findall and use the last result if there are multiple matches,
+        # i.e. nested include guards.
+        match = self.endif_c_core_re.findall('\n'.join(flines[-3:]))
         if not match and not c_core_header:
-            match = self.endif_re.search('\n'.join(flines[-3:]))
+            match = self.endif_re.findall('\n'.join(flines[-3:]))
         if not match:
             # No endif. Check if we have the last line as just '#endif' and if so
             # replace it with a properly commented one.
@@ -149,11 +159,23 @@ class GuardValidator(object):
                     fpath,
                     self.endif_c_core_re if c_core_header else self.endif_re,
                     flines[-1], '', '', False)
-        elif match.group(1) != running_guard:
+        elif match[-1] != running_guard:
             # Is the #endif guard the same as the #ifndef and #define guards?
-            fcontents = self.fail(fpath, self.endif_re, fcontents,
-                                  match.group(1), valid_guard, fix)
+            fcontents = self.fail(fpath, self.endif_re, fcontents, match[-1],
+                                  valid_guard, fix)
             if fix:
+                save(fpath, fcontents)
+
+        match = self.comments_then_includes_re.search(fcontents)
+        assert (match)
+        bad_includes = match.group(3)
+        if bad_includes:
+            print(
+                "includes after initial comments but before include guards in",
+                fpath)
+            if fix:
+                fcontents = fcontents[:match.start(3)] + match.group(
+                    5) + match.group(3) + fcontents[match.end(5):]
                 save(fpath, fcontents)
 
         return not self.failed  # Did the check succeed? (ie, not failed)
@@ -169,7 +191,7 @@ argp.add_argument('-f', '--fix', default=False, action='store_true')
 argp.add_argument('--precommit', default=False, action='store_true')
 args = argp.parse_args()
 
-grep_filter = r"grep -E '^(include|src/core)/.*\.h$'"
+grep_filter = r"grep -E '^(include|src/core|src/cpp|test/core|test/cpp|fuzztest/)/.*\.h$'"
 if args.precommit:
     git_command = 'git diff --name-only HEAD'
 else:

@@ -42,6 +42,8 @@ from ._metadata import Metadata
 from ._typing import ChannelArgumentType
 from ._typing import DeserializingFunction
 from ._typing import RequestIterableType
+from ._typing import RequestType
+from ._typing import ResponseType
 from ._typing import SerializingFunction
 from ._utils import _timeout_to_deadline
 
@@ -80,6 +82,7 @@ class _BaseMultiCallable:
     _request_serializer: SerializingFunction
     _response_deserializer: DeserializingFunction
     _interceptors: Optional[Sequence[ClientInterceptor]]
+    _references: List[Any]
     _loop: asyncio.AbstractEventLoop
 
     # pylint: disable=too-many-arguments
@@ -90,6 +93,7 @@ class _BaseMultiCallable:
         request_serializer: SerializingFunction,
         response_deserializer: DeserializingFunction,
         interceptors: Optional[Sequence[ClientInterceptor]],
+        references: List[Any],
         loop: asyncio.AbstractEventLoop,
     ) -> None:
         self._loop = loop
@@ -98,6 +102,7 @@ class _BaseMultiCallable:
         self._request_serializer = request_serializer
         self._response_deserializer = response_deserializer
         self._interceptors = interceptors
+        self._references = references
 
     @staticmethod
     def _init_metadata(
@@ -118,14 +123,14 @@ class UnaryUnaryMultiCallable(_BaseMultiCallable,
 
     def __call__(
         self,
-        request: Any,
+        request: RequestType,
         *,
         timeout: Optional[float] = None,
         metadata: Optional[Metadata] = None,
         credentials: Optional[grpc.CallCredentials] = None,
         wait_for_ready: Optional[bool] = None,
         compression: Optional[grpc.Compression] = None
-    ) -> _base_call.UnaryUnaryCall:
+    ) -> _base_call.UnaryUnaryCall[RequestType, ResponseType]:
 
         metadata = self._init_metadata(metadata, compression)
         if not self._interceptors:
@@ -149,14 +154,14 @@ class UnaryStreamMultiCallable(_BaseMultiCallable,
 
     def __call__(
         self,
-        request: Any,
+        request: RequestType,
         *,
         timeout: Optional[float] = None,
         metadata: Optional[Metadata] = None,
         credentials: Optional[grpc.CallCredentials] = None,
         wait_for_ready: Optional[bool] = None,
         compression: Optional[grpc.Compression] = None
-    ) -> _base_call.UnaryStreamCall:
+    ) -> _base_call.UnaryStreamCall[RequestType, ResponseType]:
 
         metadata = self._init_metadata(metadata, compression)
         deadline = _timeout_to_deadline(timeout)
@@ -370,6 +375,11 @@ class Channel(_base_channel.Channel):
     async def close(self, grace: Optional[float] = None):
         await self._close(grace)
 
+    def __del__(self):
+        if hasattr(self, '_channel'):
+            if not self._channel.closed():
+                self._channel.close()
+
     def get_state(self,
                   try_to_connect: bool = False) -> grpc.ChannelConnectivity:
         result = self._channel.check_connectivity_state(try_to_connect)
@@ -397,7 +407,7 @@ class Channel(_base_channel.Channel):
         return UnaryUnaryMultiCallable(self._channel, _common.encode(method),
                                        request_serializer,
                                        response_deserializer,
-                                       self._unary_unary_interceptors,
+                                       self._unary_unary_interceptors, [self],
                                        self._loop)
 
     def unary_stream(
@@ -409,7 +419,7 @@ class Channel(_base_channel.Channel):
         return UnaryStreamMultiCallable(self._channel, _common.encode(method),
                                         request_serializer,
                                         response_deserializer,
-                                        self._unary_stream_interceptors,
+                                        self._unary_stream_interceptors, [self],
                                         self._loop)
 
     def stream_unary(
@@ -421,7 +431,7 @@ class Channel(_base_channel.Channel):
         return StreamUnaryMultiCallable(self._channel, _common.encode(method),
                                         request_serializer,
                                         response_deserializer,
-                                        self._stream_unary_interceptors,
+                                        self._stream_unary_interceptors, [self],
                                         self._loop)
 
     def stream_stream(
@@ -434,7 +444,7 @@ class Channel(_base_channel.Channel):
                                          request_serializer,
                                          response_deserializer,
                                          self._stream_stream_interceptors,
-                                         self._loop)
+                                         [self], self._loop)
 
 
 def insecure_channel(
@@ -449,7 +459,7 @@ def insecure_channel(
       options: An optional list of key-value pairs (:term:`channel_arguments`
         in gRPC Core runtime) to configure the channel.
       compression: An optional value indicating the compression method to be
-        used over the lifetime of the channel. This is an EXPERIMENTAL option.
+        used over the lifetime of the channel.
       interceptors: An optional sequence of interceptors that will be executed for
         any call executed with this channel.
 
@@ -473,7 +483,7 @@ def secure_channel(target: str,
       options: An optional list of key-value pairs (:term:`channel_arguments`
         in gRPC Core runtime) to configure the channel.
       compression: An optional value indicating the compression method to be
-        used over the lifetime of the channel. This is an EXPERIMENTAL option.
+        used over the lifetime of the channel.
       interceptors: An optional sequence of interceptors that will be executed for
         any call executed with this channel.
 

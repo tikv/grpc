@@ -1,23 +1,23 @@
-/*
- *
- * Copyright 2017 gRPC authors.
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- *
- */
+//
+//
+// Copyright 2017 gRPC authors.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+//
+//
 
-#ifndef GRPC_CORE_LIB_GPRPP_REF_COUNTED_H
-#define GRPC_CORE_LIB_GPRPP_REF_COUNTED_H
+#ifndef GRPC_SRC_CORE_LIB_GPRPP_REF_COUNTED_H
+#define GRPC_SRC_CORE_LIB_GPRPP_REF_COUNTED_H
 
 #include <grpc/support/port_platform.h>
 
@@ -25,13 +25,10 @@
 #include <cassert>
 #include <cinttypes>
 
-#include <grpc/support/atm.h>
 #include <grpc/support/log.h>
-#include <grpc/support/sync.h>
 
 #include "src/core/lib/gprpp/atomic_utils.h"
 #include "src/core/lib/gprpp/debug_location.h"
-#include "src/core/lib/gprpp/memory.h"
 #include "src/core/lib/gprpp/ref_counted_ptr.h"
 
 namespace grpc_core {
@@ -216,40 +213,34 @@ class NonPolymorphicRefCount {
 };
 
 // Behavior of RefCounted<> upon ref count reaching 0.
-enum UnrefBehavior {
-  // Default behavior: Delete the object.
-  kUnrefDelete,
-  // Do not delete the object upon unref.  This is useful in cases where all
-  // existing objects must be tracked in a registry but the object's entry in
-  // the registry cannot be removed from the object's dtor due to
-  // synchronization issues.  In this case, the registry can be cleaned up
-  // later by identifying entries for which RefIfNonZero() returns null.
-  kUnrefNoDelete,
-  // Call the object's dtor but do not delete it.  This is useful for cases
-  // where the object is stored in memory allocated elsewhere (e.g., the call
-  // arena).
-  kUnrefCallDtor,
+
+// Default behavior: Delete the object.
+struct UnrefDelete {
+  template <typename T>
+  void operator()(T* p) {
+    delete p;
+  }
 };
 
-namespace internal {
-template <typename T, UnrefBehavior UnrefBehaviorArg>
-class Delete;
-template <typename T>
-class Delete<T, kUnrefDelete> {
- public:
-  explicit Delete(T* t) { delete t; }
+// Do not delete the object upon unref.  This is useful in cases where all
+// existing objects must be tracked in a registry but the object's entry in
+// the registry cannot be removed from the object's dtor due to
+// synchronization issues.  In this case, the registry can be cleaned up
+// later by identifying entries for which RefIfNonZero() returns null.
+struct UnrefNoDelete {
+  template <typename T>
+  void operator()(T* /*p*/) {}
 };
-template <typename T>
-class Delete<T, kUnrefNoDelete> {
- public:
-  explicit Delete(T* /*t*/) {}
+
+// Call the object's dtor but do not delete it.  This is useful for cases
+// where the object is stored in memory allocated elsewhere (e.g., the call
+// arena).
+struct UnrefCallDtor {
+  template <typename T>
+  void operator()(T* p) {
+    p->~T();
+  }
 };
-template <typename T>
-class Delete<T, kUnrefCallDtor> {
- public:
-  explicit Delete(T* t) { t->~T(); }
-};
-}  // namespace internal
 
 // A base class for reference-counted objects.
 // New objects should be created via new and start with a refcount of 1.
@@ -278,7 +269,7 @@ class Delete<T, kUnrefCallDtor> {
 //    ch->Unref();
 //
 template <typename Child, typename Impl = PolymorphicRefCount,
-          UnrefBehavior UnrefBehaviorArg = kUnrefDelete>
+          typename UnrefBehavior = UnrefDelete>
 class RefCounted : public Impl {
  public:
   using RefCountedChildType = Child;
@@ -303,12 +294,12 @@ class RefCounted : public Impl {
   // friend of this class.
   void Unref() {
     if (GPR_UNLIKELY(refs_.Unref())) {
-      internal::Delete<Child, UnrefBehaviorArg>(static_cast<Child*>(this));
+      unref_behavior_(static_cast<Child*>(this));
     }
   }
   void Unref(const DebugLocation& location, const char* reason) {
     if (GPR_UNLIKELY(refs_.Unref(location, reason))) {
-      internal::Delete<Child, UnrefBehaviorArg>(static_cast<Child*>(this));
+      unref_behavior_(static_cast<Child*>(this));
     }
   }
 
@@ -333,6 +324,11 @@ class RefCounted : public Impl {
                       intptr_t initial_refcount = 1)
       : refs_(initial_refcount, trace) {}
 
+  // Note: Tracing is a no-op on non-debug builds.
+  explicit RefCounted(UnrefBehavior b, const char* trace = nullptr,
+                      intptr_t initial_refcount = 1)
+      : refs_(initial_refcount, trace), unref_behavior_(b) {}
+
  private:
   // Allow RefCountedPtr<> to access IncrementRefCount().
   template <typename T>
@@ -344,8 +340,9 @@ class RefCounted : public Impl {
   }
 
   RefCount refs_;
+  GPR_NO_UNIQUE_ADDRESS UnrefBehavior unref_behavior_;
 };
 
 }  // namespace grpc_core
 
-#endif /* GRPC_CORE_LIB_GPRPP_REF_COUNTED_H */
+#endif  // GRPC_SRC_CORE_LIB_GPRPP_REF_COUNTED_H

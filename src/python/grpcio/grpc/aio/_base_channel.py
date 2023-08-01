@@ -14,7 +14,7 @@
 """Abstract base classes for Channel objects and Multicallable objects."""
 
 import abc
-from typing import Any, Optional
+from typing import Generic, Optional
 
 import grpc
 
@@ -22,23 +22,25 @@ from . import _base_call
 from ._typing import DeserializingFunction
 from ._typing import MetadataType
 from ._typing import RequestIterableType
+from ._typing import RequestType
+from ._typing import ResponseType
 from ._typing import SerializingFunction
 
 
-class UnaryUnaryMultiCallable(abc.ABC):
+class UnaryUnaryMultiCallable(Generic[RequestType, ResponseType], abc.ABC):
     """Enables asynchronous invocation of a unary-call RPC."""
 
     @abc.abstractmethod
     def __call__(
         self,
-        request: Any,
+        request: RequestType,
         *,
         timeout: Optional[float] = None,
         metadata: Optional[MetadataType] = None,
         credentials: Optional[grpc.CallCredentials] = None,
         wait_for_ready: Optional[bool] = None,
         compression: Optional[grpc.Compression] = None
-    ) -> _base_call.UnaryUnaryCall:
+    ) -> _base_call.UnaryUnaryCall[RequestType, ResponseType]:
         """Asynchronously invokes the underlying RPC.
 
         Args:
@@ -49,10 +51,9 @@ class UnaryUnaryMultiCallable(abc.ABC):
             service-side of the RPC.
           credentials: An optional CallCredentials for the RPC. Only valid for
             secure Channel.
-          wait_for_ready: This is an EXPERIMENTAL argument. An optional
-            flag to enable :term:`wait_for_ready` mechanism.
+          wait_for_ready: An optional flag to enable :term:`wait_for_ready` mechanism.
           compression: An element of grpc.compression, e.g.
-            grpc.compression.Gzip. This is an EXPERIMENTAL option.
+            grpc.compression.Gzip.
 
         Returns:
           A UnaryUnaryCall object.
@@ -64,20 +65,20 @@ class UnaryUnaryMultiCallable(abc.ABC):
         """
 
 
-class UnaryStreamMultiCallable(abc.ABC):
+class UnaryStreamMultiCallable(Generic[RequestType, ResponseType], abc.ABC):
     """Enables asynchronous invocation of a server-streaming RPC."""
 
     @abc.abstractmethod
     def __call__(
         self,
-        request: Any,
+        request: RequestType,
         *,
         timeout: Optional[float] = None,
         metadata: Optional[MetadataType] = None,
         credentials: Optional[grpc.CallCredentials] = None,
         wait_for_ready: Optional[bool] = None,
         compression: Optional[grpc.Compression] = None
-    ) -> _base_call.UnaryStreamCall:
+    ) -> _base_call.UnaryStreamCall[RequestType, ResponseType]:
         """Asynchronously invokes the underlying RPC.
 
         Args:
@@ -88,10 +89,9 @@ class UnaryStreamMultiCallable(abc.ABC):
             service-side of the RPC.
           credentials: An optional CallCredentials for the RPC. Only valid for
             secure Channel.
-          wait_for_ready: This is an EXPERIMENTAL argument. An optional
-            flag to enable :term:`wait_for_ready` mechanism.
+          wait_for_ready: An optional flag to enable :term:`wait_for_ready` mechanism.
           compression: An element of grpc.compression, e.g.
-            grpc.compression.Gzip. This is an EXPERIMENTAL option.
+            grpc.compression.Gzip.
 
         Returns:
           A UnaryStreamCall object.
@@ -127,10 +127,9 @@ class StreamUnaryMultiCallable(abc.ABC):
             service-side of the RPC.
           credentials: An optional CallCredentials for the RPC. Only valid for
             secure Channel.
-          wait_for_ready: This is an EXPERIMENTAL argument. An optional
-            flag to enable :term:`wait_for_ready` mechanism.
+          wait_for_ready: An optional flag to enable :term:`wait_for_ready` mechanism.
           compression: An element of grpc.compression, e.g.
-            grpc.compression.Gzip. This is an EXPERIMENTAL option.
+            grpc.compression.Gzip.
 
         Returns:
           A StreamUnaryCall object.
@@ -166,10 +165,9 @@ class StreamStreamMultiCallable(abc.ABC):
             service-side of the RPC.
           credentials: An optional CallCredentials for the RPC. Only valid for
             secure Channel.
-          wait_for_ready: This is an EXPERIMENTAL argument. An optional
-            flag to enable :term:`wait_for_ready` mechanism.
+          wait_for_ready: An optional flag to enable :term:`wait_for_ready` mechanism.
           compression: An element of grpc.compression, e.g.
-            grpc.compression.Gzip. This is an EXPERIMENTAL option.
+            grpc.compression.Gzip.
 
         Returns:
           A StreamStreamCall object.

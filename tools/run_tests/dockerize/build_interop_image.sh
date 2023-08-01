@@ -79,29 +79,16 @@ then
   MOUNT_ARGS+=" -v $HOME/service_account:/var/local/jenkins/service_account:ro"
 fi
 
-# Use image name based on Dockerfile checksum
-# on OSX use md5 instead of sha1sum
-if command -v sha1sum > /dev/null;
-then
-  BASE_IMAGE=${BASE_NAME}:$(sha1sum "tools/dockerfile/interoptest/$BASE_NAME/Dockerfile" | cut -f1 -d\ )
-else
-  BASE_IMAGE=${BASE_NAME}:$(md5 -r "tools/dockerfile/interoptest/$BASE_NAME/Dockerfile" | cut -f1 -d\ )
-fi
+BASE_IMAGE_DIR="tools/dockerfile/interoptest/$BASE_NAME"
+# The exact base docker image to use and its version is determined by the corresponding .current_version file
+BASE_IMAGE="$(cat "${BASE_IMAGE_DIR}.current_version")"
 
-if [ "$DOCKERHUB_ORGANIZATION" != "" ]
-then
-  BASE_IMAGE=$DOCKERHUB_ORGANIZATION/$BASE_IMAGE
-  time docker pull "$BASE_IMAGE"
-else
-  # Make sure docker image has been built. Should be instantaneous if so.
-  docker build -t "$BASE_IMAGE" --force-rm=true "tools/dockerfile/interoptest/$BASE_NAME" || exit $?
-fi
-
+# If TTY is available, the running container can be conveniently terminated with Ctrl+C.
 if [[ -t 0 ]]; then
-  DOCKER_TTY_ARGS="-it"
+  DOCKER_TTY_ARGS=("-it")
 else
   # The input device on kokoro is not a TTY, so -it does not work.
-  DOCKER_TTY_ARGS=
+  DOCKER_TTY_ARGS=()
 fi
 
 CONTAINER_NAME="build_${BASE_NAME}_$(uuidgen)"
@@ -114,7 +101,7 @@ CONTAINER_NAME="build_${BASE_NAME}_$(uuidgen)"
 (docker run \
   --cap-add SYS_PTRACE \
   --env-file "tools/run_tests/dockerize/docker_propagate_env.list" \
-  $DOCKER_TTY_ARGS \
+  "${DOCKER_TTY_ARGS[@]}" \
   $MOUNT_ARGS \
   $BUILD_INTEROP_DOCKER_EXTRA_ARGS \
   --name="$CONTAINER_NAME" \

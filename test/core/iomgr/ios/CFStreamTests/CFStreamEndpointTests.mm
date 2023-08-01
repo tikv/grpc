@@ -22,14 +22,16 @@
 
 #ifdef GRPC_CFSTREAM
 
+#include <limits.h>
+
 #include <netinet/in.h>
 
 #include <grpc/grpc.h>
-#include <grpc/impl/codegen/sync.h>
 #include <grpc/support/sync.h>
 
 #include "src/core/lib/address_utils/parse_address.h"
 #include "src/core/lib/address_utils/sockaddr_utils.h"
+#include "src/core/lib/event_engine/channel_args_endpoint_config.h"
 #include "src/core/lib/iomgr/endpoint.h"
 #include "src/core/lib/iomgr/resolve_address.h"
 #include "src/core/lib/iomgr/tcp_client.h"
@@ -104,8 +106,6 @@ static bool compare_slice_buffer_with_buffer(grpc_slice_buffer *slices, const ch
 
   grpc_core::ExecCtx exec_ctx;
 
-  grpc_resolved_address resolved_addr;
-  struct sockaddr_in *addr = reinterpret_cast<struct sockaddr_in *>(resolved_addr.addr);
   int svr_fd;
   int r;
   std::promise<grpc_error_handle> connected_promise;
@@ -113,29 +113,30 @@ static bool compare_slice_buffer_with_buffer(grpc_slice_buffer *slices, const ch
 
   gpr_log(GPR_DEBUG, "test_succeeds");
 
-  GPR_ASSERT(grpc_string_to_sockaddr(&resolved_addr, "127.0.0.1", 0) == GRPC_ERROR_NONE);
+  auto resolved_addr = grpc_core::StringToSockaddr("127.0.0.1:0");
+  struct sockaddr_in *addr = reinterpret_cast<struct sockaddr_in *>(resolved_addr->addr);
 
   /* create a phony server */
   svr_fd = socket(AF_INET, SOCK_STREAM, 0);
   XCTAssertGreaterThanOrEqual(svr_fd, 0);
-  XCTAssertEqual(bind(svr_fd, (struct sockaddr *)addr, (socklen_t)resolved_addr.len), 0);
+  XCTAssertEqual(bind(svr_fd, (struct sockaddr *)addr, (socklen_t)resolved_addr->len), 0);
   XCTAssertEqual(listen(svr_fd, 1), 0);
 
   /* connect to it */
-  XCTAssertEqual(getsockname(svr_fd, (struct sockaddr *)addr, (socklen_t *)&resolved_addr.len), 0);
+  XCTAssertEqual(getsockname(svr_fd, (struct sockaddr *)addr, (socklen_t *)&resolved_addr->len), 0);
   init_event_closure(&done, &connected_promise);
-  const grpc_channel_args *args =
+  auto args =
       grpc_core::CoreConfiguration::Get().channel_args_preconditioning().PreconditionChannelArgs(
           nullptr);
-  grpc_tcp_client_connect(&done, &ep_, nullptr, args, &resolved_addr,
-                          grpc_core::Timestamp::InfFuture());
-  grpc_channel_args_destroy(args);
+  grpc_tcp_client_connect(&done, &ep_, nullptr,
+                          grpc_event_engine::experimental::ChannelArgsEndpointConfig(args),
+                          &*resolved_addr, grpc_core::Timestamp::InfFuture());
 
   /* await the connection */
   do {
-    resolved_addr.len = sizeof(addr);
+    resolved_addr->len = sizeof(addr);
     r = accept(svr_fd, reinterpret_cast<struct sockaddr *>(addr),
-               reinterpret_cast<socklen_t *>(&resolved_addr.len));
+               reinterpret_cast<socklen_t *>(&resolved_addr->len));
   } while (r == -1 && errno == EINTR);
   XCTAssertGreaterThanOrEqual(r, 0, @"connection failed with return code %@ and errno %@", @(r),
                               @(errno));
@@ -144,7 +145,7 @@ static bool compare_slice_buffer_with_buffer(grpc_slice_buffer *slices, const ch
   /* wait for the connection callback to finish */
   std::future<grpc_error_handle> connected_future = connected_promise.get_future();
   XCTAssertEqual([self waitForEvent:&connected_future timeout:kConnectTimeout], YES);
-  XCTAssertEqual(connected_future.get(), GRPC_ERROR_NONE);
+  XCTAssertEqual(connected_future.get(), absl::OkStatus());
 }
 
 - (void)tearDown {
@@ -172,11 +173,11 @@ static bool compare_slice_buffer_with_buffer(grpc_slice_buffer *slices, const ch
   slice = grpc_slice_from_static_buffer(write_buffer, kBufferSize);
   grpc_slice_buffer_add(&write_slices, slice);
   init_event_closure(&write_done, &write_promise);
-  grpc_endpoint_write(ep_, &write_slices, &write_done, nullptr);
+  grpc_endpoint_write(ep_, &write_slices, &write_done, nullptr, /*max_frame_size=*/INT_MAX);
 
   std::future<grpc_error_handle> write_future = write_promise.get_future();
   XCTAssertEqual([self waitForEvent:&write_future timeout:kWriteTimeout], YES);
-  XCTAssertEqual(write_future.get(), GRPC_ERROR_NONE);
+  XCTAssertEqual(write_future.get(), absl::OkStatus());
 
   while (recv_size < kBufferSize) {
     ssize_t size = recv(svr_fd_, read_buffer, kBufferSize, 0);
@@ -194,16 +195,17 @@ static bool compare_slice_buffer_with_buffer(grpc_slice_buffer *slices, const ch
   while (read_slices.length < kBufferSize) {
     std::promise<grpc_error_handle> read_promise;
     init_event_closure(&read_done, &read_promise);
-    grpc_endpoint_read(ep_, &read_one_slice, &read_done, /*urgent=*/false);
+    grpc_endpoint_read(ep_, &read_one_slice, &read_done, /*urgent=*/false,
+                       /*min_progress_size=*/1);
     std::future<grpc_error_handle> read_future = read_promise.get_future();
     XCTAssertEqual([self waitForEvent:&read_future timeout:kReadTimeout], YES);
-    XCTAssertEqual(read_future.get(), GRPC_ERROR_NONE);
+    XCTAssertEqual(read_future.get(), absl::OkStatus());
     grpc_slice_buffer_move_into(&read_one_slice, &read_slices);
     XCTAssertLessThanOrEqual(read_slices.length, kBufferSize);
   }
   XCTAssertTrue(compare_slice_buffer_with_buffer(&read_slices, read_buffer, kBufferSize));
 
-  grpc_endpoint_shutdown(ep_, GRPC_ERROR_NONE);
+  grpc_endpoint_shutdown(ep_, absl::OkStatus());
   grpc_slice_buffer_reset_and_unref(&read_slices);
   grpc_slice_buffer_reset_and_unref(&write_slices);
   grpc_slice_buffer_reset_and_unref(&read_one_slice);
@@ -226,17 +228,18 @@ static bool compare_slice_buffer_with_buffer(grpc_slice_buffer *slices, const ch
 
   grpc_slice_buffer_init(&read_slices);
   init_event_closure(&read_done, &read_promise);
-  grpc_endpoint_read(ep_, &read_slices, &read_done, /*urgent=*/false);
+  grpc_endpoint_read(ep_, &read_slices, &read_done, /*urgent=*/false,
+                     /*min_progress_size=*/1);
 
   grpc_slice_buffer_init(&write_slices);
   slice = grpc_slice_from_static_buffer(write_buffer, kBufferSize);
   grpc_slice_buffer_add(&write_slices, slice);
   init_event_closure(&write_done, &write_promise);
-  grpc_endpoint_write(ep_, &write_slices, &write_done, nullptr);
+  grpc_endpoint_write(ep_, &write_slices, &write_done, nullptr, /*max_frame_size=*/INT_MAX);
 
   std::future<grpc_error_handle> write_future = write_promise.get_future();
   XCTAssertEqual([self waitForEvent:&write_future timeout:kWriteTimeout], YES);
-  XCTAssertEqual(write_future.get(), GRPC_ERROR_NONE);
+  XCTAssertEqual(write_future.get(), absl::OkStatus());
 
   while (recv_size < kBufferSize) {
     ssize_t size = recv(svr_fd_, read_buffer, kBufferSize, 0);
@@ -250,11 +253,11 @@ static bool compare_slice_buffer_with_buffer(grpc_slice_buffer *slices, const ch
   std::future<grpc_error_handle> read_future = read_promise.get_future();
   XCTAssertEqual([self waitForEvent:&read_future timeout:kReadTimeout], NO);
 
-  grpc_endpoint_shutdown(ep_, GRPC_ERROR_NONE);
+  grpc_endpoint_shutdown(ep_, absl::OkStatus());
 
   grpc_core::ExecCtx::Get()->Flush();
   XCTAssertEqual([self waitForEvent:&read_future timeout:kReadTimeout], YES);
-  XCTAssertNotEqual(read_future.get(), GRPC_ERROR_NONE);
+  XCTAssertNotEqual(read_future.get(), absl::OkStatus());
 
   grpc_slice_buffer_reset_and_unref(&read_slices);
   grpc_slice_buffer_reset_and_unref(&write_slices);
@@ -277,18 +280,19 @@ static bool compare_slice_buffer_with_buffer(grpc_slice_buffer *slices, const ch
 
   init_event_closure(&read_done, &read_promise);
   grpc_slice_buffer_init(&read_slices);
-  grpc_endpoint_read(ep_, &read_slices, &read_done, /*urgent=*/false);
+  grpc_endpoint_read(ep_, &read_slices, &read_done, /*urgent=*/false,
+                     /*min_progress_size=*/1);
 
   grpc_slice_buffer_init(&write_slices);
   slice = grpc_slice_from_static_buffer(write_buffer, kBufferSize);
   grpc_slice_buffer_add(&write_slices, slice);
 
   init_event_closure(&write_done, &write_promise);
-  grpc_endpoint_write(ep_, &write_slices, &write_done, nullptr);
+  grpc_endpoint_write(ep_, &write_slices, &write_done, nullptr, /*max_frame_size=*/INT_MAX);
 
   std::future<grpc_error_handle> write_future = write_promise.get_future();
   XCTAssertEqual([self waitForEvent:&write_future timeout:kWriteTimeout], YES);
-  XCTAssertEqual(write_future.get(), GRPC_ERROR_NONE);
+  XCTAssertEqual(write_future.get(), absl::OkStatus());
 
   while (recv_size < kBufferSize) {
     ssize_t size = recv(svr_fd_, read_buffer, kBufferSize, 0);
@@ -303,9 +307,9 @@ static bool compare_slice_buffer_with_buffer(grpc_slice_buffer *slices, const ch
 
   std::future<grpc_error_handle> read_future = read_promise.get_future();
   XCTAssertEqual([self waitForEvent:&read_future timeout:kReadTimeout], YES);
-  XCTAssertNotEqual(read_future.get(), GRPC_ERROR_NONE);
+  XCTAssertNotEqual(read_future.get(), absl::OkStatus());
 
-  grpc_endpoint_shutdown(ep_, GRPC_ERROR_NONE);
+  grpc_endpoint_shutdown(ep_, absl::OkStatus());
   grpc_slice_buffer_reset_and_unref(&read_slices);
   grpc_slice_buffer_reset_and_unref(&write_slices);
 }
@@ -319,7 +323,8 @@ static bool compare_slice_buffer_with_buffer(grpc_slice_buffer *slices, const ch
 
   init_event_closure(&read_done, &read_promise);
   grpc_slice_buffer_init(&read_slices);
-  grpc_endpoint_read(ep_, &read_slices, &read_done, /*urgent=*/false);
+  grpc_endpoint_read(ep_, &read_slices, &read_done, /*urgent=*/false,
+                     /*min_progress_size=*/1);
 
   struct linger so_linger;
   so_linger.l_onoff = 1;
@@ -330,9 +335,9 @@ static bool compare_slice_buffer_with_buffer(grpc_slice_buffer *slices, const ch
 
   std::future<grpc_error_handle> read_future = read_promise.get_future();
   XCTAssertEqual([self waitForEvent:&read_future timeout:kReadTimeout], YES);
-  XCTAssertNotEqual(read_future.get(), GRPC_ERROR_NONE);
+  XCTAssertNotEqual(read_future.get(), absl::OkStatus());
 
-  grpc_endpoint_shutdown(ep_, GRPC_ERROR_NONE);
+  grpc_endpoint_shutdown(ep_, absl::OkStatus());
   grpc_slice_buffer_reset_and_unref(&read_slices);
 }
 

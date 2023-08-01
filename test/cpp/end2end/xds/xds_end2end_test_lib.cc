@@ -36,10 +36,13 @@
 
 #include <grpcpp/security/tls_certificate_provider.h>
 
+#include "src/core/ext/filters/http/server/http_server_filter.h"
 #include "src/core/ext/xds/xds_channel_args.h"
-#include "src/core/ext/xds/xds_client.h"
-#include "src/core/lib/gpr/env.h"
+#include "src/core/ext/xds/xds_client_grpc.h"
 #include "src/core/lib/gpr/tmpfile.h"
+#include "src/core/lib/gprpp/env.h"
+#include "src/core/lib/iomgr/load_file.h"
+#include "src/core/lib/surface/server.h"
 #include "src/cpp/client/secure_credentials.h"
 #include "src/proto/grpc/testing/xds/v3/router.grpc.pb.h"
 #include "test/core/util/resolve_localhost_ip46.h"
@@ -48,14 +51,15 @@
 namespace grpc {
 namespace testing {
 
+using ::envoy::config::core::v3::HealthStatus;
 using ::envoy::config::endpoint::v3::ClusterLoadAssignment;
-using ::envoy::config::endpoint::v3::HealthStatus;
 using ::envoy::config::listener::v3::Listener;
 using ::envoy::extensions::filters::network::http_connection_manager::v3::
     HttpConnectionManager;
 
 using ::grpc::experimental::ExternalCertificateVerifier;
 using ::grpc::experimental::IdentityKeyCertPair;
+using ::grpc::experimental::ServerMetricRecorder;
 using ::grpc::experimental::StaticDataCertificateProvider;
 
 //
@@ -142,7 +146,7 @@ void XdsEnd2endTest::ServerThread::Start() {
   // by ServerThread::Serve from firing before the wait below is hit.
   grpc_core::MutexLock lock(&mu);
   grpc_core::CondVar cond;
-  thread_ = absl::make_unique<std::thread>(
+  thread_ = std::make_unique<std::thread>(
       std::bind(&ServerThread::Serve, this, &mu, &cond));
   cond.Wait(&mu);
   gpr_log(GPR_INFO, "%s server startup complete", Type());
@@ -158,6 +162,17 @@ void XdsEnd2endTest::ServerThread::Shutdown() {
   running_ = false;
 }
 
+void XdsEnd2endTest::ServerThread::StopListeningAndSendGoaways() {
+  gpr_log(GPR_INFO, "%s sending GOAWAYs", Type());
+  {
+    grpc_core::ExecCtx exec_ctx;
+    auto* server = grpc_core::Server::FromC(server_->c_server());
+    server->StopListening();
+    server->SendGoaways();
+  }
+  gpr_log(GPR_INFO, "%s done sending GOAWAYs", Type());
+}
+
 void XdsEnd2endTest::ServerThread::Serve(grpc_core::Mutex* mu,
                                          grpc_core::CondVar* cond) {
   // We need to acquire the lock here in order to prevent the notify_one
@@ -169,12 +184,19 @@ void XdsEnd2endTest::ServerThread::Serve(grpc_core::Mutex* mu,
     if (GetParam().bootstrap_source() ==
         XdsTestType::kBootstrapFromChannelArg) {
       builder.SetOption(
-          absl::make_unique<XdsChannelArgsServerBuilderOption>(test_obj_));
+          std::make_unique<XdsChannelArgsServerBuilderOption>(test_obj_));
     }
     builder.set_status_notifier(&notifier_);
     builder.experimental().set_drain_grace_time(
         test_obj_->xds_drain_grace_time_ms_);
     builder.AddListeningPort(server_address, Credentials());
+    // Allow gRPC Core's HTTP server to accept PUT requests for testing
+    // purposes.
+    if (allow_put_requests_) {
+      builder.AddChannelArgument(
+          GRPC_ARG_DO_NOT_USE_UNLESS_YOU_HAVE_PERMISSION_FROM_GRPC_TEAM_ALLOW_BROKEN_PUT_REQUESTS,
+          true);
+    }
     RegisterAllServices(&builder);
     server_ = builder.BuildAndStart();
   } else {
@@ -230,6 +252,9 @@ XdsEnd2endTest::BackendServerThread::Credentials() {
 
 void XdsEnd2endTest::BackendServerThread::RegisterAllServices(
     ServerBuilder* builder) {
+  server_metric_recorder_ = ServerMetricRecorder::Create();
+  ServerBuilder::experimental_type(builder).EnableCallMetricRecording(
+      server_metric_recorder_.get());
   builder->RegisterService(&backend_service_);
   builder->RegisterService(&backend_service1_);
   builder->RegisterService(&backend_service2_);
@@ -262,10 +287,8 @@ XdsEnd2endTest::BalancerServerThread::BalancerServerThread(
 
 void XdsEnd2endTest::BalancerServerThread::RegisterAllServices(
     ServerBuilder* builder) {
-  builder->RegisterService(ads_service_->v2_rpc_service());
-  builder->RegisterService(ads_service_->v3_rpc_service());
-  builder->RegisterService(lrs_service_->v2_rpc_service());
-  builder->RegisterService(lrs_service_->v3_rpc_service());
+  builder->RegisterService(ads_service_.get());
+  builder->RegisterService(lrs_service_.get());
 }
 
 void XdsEnd2endTest::BalancerServerThread::StartAllServices() {
@@ -315,9 +338,14 @@ std::string XdsEnd2endTest::BootstrapBuilder::MakeXdsServersText(
       "          \"server_features\": [<SERVER_FEATURES>]\n"
       "        }\n"
       "      ]";
+  std::vector<std::string> server_features;
+  if (ignore_resource_deletion_) {
+    server_features.push_back("\"ignore_resource_deletion\"");
+  }
   return absl::StrReplaceAll(
-      kXdsServerTemplate, {{"<SERVER_URI>", server_uri},
-                           {"<SERVER_FEATURES>", (v2_ ? "" : "\"xds_v3\"")}});
+      kXdsServerTemplate,
+      {{"<SERVER_URI>", server_uri},
+       {"<SERVER_FEATURES>", absl::StrJoin(server_features, ", ")}});
 }
 
 std::string XdsEnd2endTest::BootstrapBuilder::MakeNodeText() {
@@ -407,6 +435,9 @@ void XdsEnd2endTest::RpcOptions::SetupRpc(ClientContext* context,
   if (skip_cancelled_check) {
     request->mutable_param()->set_skip_cancelled_check(true);
   }
+  if (backend_metrics.has_value()) {
+    *request->mutable_param()->mutable_backend_metrics() = *backend_metrics;
+  }
 }
 
 //
@@ -443,12 +474,10 @@ XdsEnd2endTest::XdsEnd2endTest() : balancer_(CreateAndStartBalancer()) {
   // Construct LDS resource.
   default_listener_.set_name(kServerName);
   HttpConnectionManager http_connection_manager;
-  if (!GetParam().use_v2()) {
-    auto* filter = http_connection_manager.add_http_filters();
-    filter->set_name("router");
-    filter->mutable_typed_config()->PackFrom(
-        envoy::extensions::filters::http::router::v3::Router());
-  }
+  auto* filter = http_connection_manager.add_http_filters();
+  filter->set_name("router");
+  filter->mutable_typed_config()->PackFrom(
+      envoy::extensions::filters::http::router::v3::Router());
   default_listener_.mutable_api_listener()->mutable_api_listener()->PackFrom(
       http_connection_manager);
   // Construct RDS resource.
@@ -495,8 +524,8 @@ void XdsEnd2endTest::TearDown() {
   // Clear global xDS channel args, since they will go out of scope
   // when this test object is destroyed.
   grpc_core::internal::SetXdsChannelArgsForTest(nullptr);
-  gpr_unsetenv("GRPC_XDS_BOOTSTRAP");
-  gpr_unsetenv("GRPC_XDS_BOOTSTRAP_CONFIG");
+  grpc_core::UnsetEnv("GRPC_XDS_BOOTSTRAP");
+  grpc_core::UnsetEnv("GRPC_XDS_BOOTSTRAP_CONFIG");
   if (bootstrap_file_ != nullptr) {
     remove(bootstrap_file_);
     gpr_free(bootstrap_file_);
@@ -506,7 +535,7 @@ void XdsEnd2endTest::TearDown() {
 std::unique_ptr<XdsEnd2endTest::BalancerServerThread>
 XdsEnd2endTest::CreateAndStartBalancer() {
   std::unique_ptr<BalancerServerThread> balancer =
-      absl::make_unique<BalancerServerThread>(this);
+      std::make_unique<BalancerServerThread>(this);
   balancer->Start();
   return balancer;
 }
@@ -720,16 +749,16 @@ void XdsEnd2endTest::InitClient(BootstrapBuilder builder,
   xds_channel_args_.num_args = xds_channel_args_to_add_.size();
   xds_channel_args_.args = xds_channel_args_to_add_.data();
   // Initialize XdsClient state.
-  builder.SetDefaultServer(absl::StrCat("localhost:", balancer_->port()));
-  if (GetParam().use_v2()) builder.SetV2();
+  builder.SetDefaultServer(absl::StrCat("localhost:", balancer_->port()),
+                           /*ignore_if_set=*/true);
   bootstrap_ = builder.Build();
   if (GetParam().bootstrap_source() == XdsTestType::kBootstrapFromEnvVar) {
-    gpr_setenv("GRPC_XDS_BOOTSTRAP_CONFIG", bootstrap_.c_str());
+    grpc_core::SetEnv("GRPC_XDS_BOOTSTRAP_CONFIG", bootstrap_.c_str());
   } else if (GetParam().bootstrap_source() == XdsTestType::kBootstrapFromFile) {
     FILE* out = gpr_tmpfile("xds_bootstrap_v3", &bootstrap_file_);
     fputs(bootstrap_.c_str(), out);
     fclose(out);
-    gpr_setenv("GRPC_XDS_BOOTSTRAP", bootstrap_file_);
+    grpc_core::SetEnv("GRPC_XDS_BOOTSTRAP", bootstrap_file_);
   }
   if (GetParam().bootstrap_source() != XdsTestType::kBootstrapFromChannelArg) {
     // If getting bootstrap from channel arg, we'll pass these args in
@@ -764,14 +793,15 @@ std::shared_ptr<Channel> XdsEnd2endTest::CreateChannel(
   // TODO(roth): Remove this once we enable retries by default internally.
   args->SetInt(GRPC_ARG_ENABLE_RETRIES, 1);
   if (failover_timeout_ms > 0) {
-    args->SetInt(GRPC_ARG_PRIORITY_FAILOVER_TIMEOUT_MS, failover_timeout_ms);
+    args->SetInt(GRPC_ARG_PRIORITY_FAILOVER_TIMEOUT_MS,
+                 failover_timeout_ms * grpc_test_slowdown_factor());
   }
   if (GetParam().bootstrap_source() == XdsTestType::kBootstrapFromChannelArg) {
     // We're getting the bootstrap from a channel arg, so we do the
     // same thing for the response generator to use for the xDS
     // channel and the xDS resource-does-not-exist timeout value.
     args->SetString(GRPC_ARG_TEST_ONLY_DO_NOT_USE_IN_PROD_XDS_BOOTSTRAP_CONFIG,
-                    bootstrap_.c_str());
+                    bootstrap_);
     args->SetPointerWithVtable(
         GRPC_ARG_TEST_ONLY_DO_NOT_USE_IN_PROD_XDS_CLIENT_CHANNEL_ARGS,
         &xds_channel_args_, &kChannelArgsArgVtable);
@@ -785,8 +815,9 @@ std::shared_ptr<Channel> XdsEnd2endTest::CreateChannel(
   return grpc::CreateCustomChannel(uri, channel_creds, *args);
 }
 
-Status XdsEnd2endTest::SendRpc(const RpcOptions& rpc_options,
-                               EchoResponse* response) {
+Status XdsEnd2endTest::SendRpc(
+    const RpcOptions& rpc_options, EchoResponse* response,
+    std::multimap<std::string, std::string>* server_initial_metadata) {
   EchoResponse local_response;
   if (response == nullptr) response = &local_response;
   ClientContext context;
@@ -811,18 +842,51 @@ Status XdsEnd2endTest::SendRpc(const RpcOptions& rpc_options,
           SendRpcMethod(stub2_.get(), rpc_options, &context, request, response);
       break;
   }
+  if (server_initial_metadata != nullptr) {
+    for (const auto& it : context.GetServerInitialMetadata()) {
+      std::string header(it.first.data(), it.first.size());
+      // Guard against implementation-specific header case - RFC 2616
+      absl::AsciiStrToLower(&header);
+      server_initial_metadata->emplace(
+          header, std::string(it.second.data(), it.second.size()));
+    }
+  }
   return status;
 }
 
-void XdsEnd2endTest::CheckRpcSendOk(const size_t times,
-                                    const RpcOptions& rpc_options) {
-  for (size_t i = 0; i < times; ++i) {
-    EchoResponse response;
-    const Status status = SendRpc(rpc_options, &response);
-    EXPECT_TRUE(status.ok()) << "code=" << status.error_code()
-                             << " message=" << status.error_message();
-    EXPECT_EQ(response.message(), kRequestMessage);
+void XdsEnd2endTest::SendRpcsUntil(
+    const grpc_core::DebugLocation& debug_location,
+    std::function<bool(const RpcResult&)> continue_predicate, int timeout_ms,
+    const RpcOptions& rpc_options) {
+  absl::Time deadline = absl::InfiniteFuture();
+  if (timeout_ms != 0) {
+    deadline = absl::Now() +
+               (absl::Milliseconds(timeout_ms) * grpc_test_slowdown_factor());
   }
+  while (true) {
+    RpcResult result;
+    result.status = SendRpc(rpc_options, &result.response);
+    if (!continue_predicate(result)) return;
+    EXPECT_LE(absl::Now(), deadline)
+        << debug_location.file() << ":" << debug_location.line();
+    if (absl::Now() >= deadline) break;
+  }
+}
+
+void XdsEnd2endTest::CheckRpcSendOk(
+    const grpc_core::DebugLocation& debug_location, const size_t times,
+    const RpcOptions& rpc_options) {
+  SendRpcsUntil(
+      debug_location,
+      [debug_location, times, n = size_t{0}](const RpcResult& result) mutable {
+        EXPECT_TRUE(result.status.ok())
+            << "code=" << result.status.error_code()
+            << " message=" << result.status.error_message() << " at "
+            << debug_location.file() << ":" << debug_location.line();
+        EXPECT_EQ(result.response.message(), kRequestMessage);
+        return ++n < times;
+      },
+      /*timeout_ms=*/0, rpc_options);
 }
 
 void XdsEnd2endTest::CheckRpcSendFailure(
@@ -834,38 +898,29 @@ void XdsEnd2endTest::CheckRpcSendFailure(
   EXPECT_EQ(expected_status, status.error_code())
       << debug_location.file() << ":" << debug_location.line();
   EXPECT_THAT(status.error_message(),
-              ::testing::ContainsRegex(expected_message_regex))
+              ::testing::MatchesRegex(expected_message_regex))
       << debug_location.file() << ":" << debug_location.line();
 }
 
-void XdsEnd2endTest::CheckRpcSendFailure(
-    const CheckRpcSendFailureOptions& options) {
-  for (size_t i = 0; options.continue_predicate(i); ++i) {
-    const Status status = SendRpc(options.rpc_options);
-    EXPECT_FALSE(status.ok());
-    if (options.expected_error_code != StatusCode::OK) {
-      EXPECT_EQ(options.expected_error_code, status.error_code())
-          << "code=" << status.error_code()
-          << " message=" << status.error_message();
-      ;
-    }
-  }
-}
-
 size_t XdsEnd2endTest::SendRpcsAndCountFailuresWithMessage(
-    size_t num_rpcs, const char* drop_error_message_prefix,
+    const grpc_core::DebugLocation& debug_location, size_t num_rpcs,
+    StatusCode expected_status, absl::string_view expected_message_prefix,
     const RpcOptions& rpc_options) {
   size_t num_failed = 0;
-  for (size_t i = 0; i < num_rpcs; ++i) {
-    Status status = SendRpc(rpc_options);
-    if (!status.ok()) {
-      EXPECT_THAT(status.error_message(),
-                  ::testing::StartsWith(drop_error_message_prefix))
-          << "code=" << status.error_code()
-          << " message=" << status.error_message();
-      ++num_failed;
-    }
-  }
+  SendRpcsUntil(
+      debug_location,
+      [&, n = size_t{0}](const RpcResult& result) mutable {
+        if (!result.status.ok()) {
+          EXPECT_EQ(result.status.error_code(), expected_status)
+              << debug_location.file() << ":" << debug_location.line();
+          EXPECT_THAT(result.status.error_message(),
+                      ::testing::StartsWith(expected_message_prefix))
+              << debug_location.file() << ":" << debug_location.line();
+          ++num_failed;
+        }
+        return ++n < num_rpcs;
+      },
+      /*timeout_ms=*/0, rpc_options);
   return num_failed;
 }
 
@@ -890,14 +945,15 @@ Status XdsEnd2endTest::LongRunningRpc::GetStatus() {
 }
 
 std::vector<XdsEnd2endTest::ConcurrentRpc> XdsEnd2endTest::SendConcurrentRpcs(
+    const grpc_core::DebugLocation& debug_location,
     grpc::testing::EchoTestService::Stub* stub, size_t num_rpcs,
     const RpcOptions& rpc_options) {
   // Variables for RPCs.
   std::vector<ConcurrentRpc> rpcs(num_rpcs);
   EchoRequest request;
   // Variables for synchronization
-  absl::Mutex mu;
-  absl::CondVar cv;
+  grpc_core::Mutex mu;
+  grpc_core::CondVar cv;
   size_t completed = 0;
   // Set-off callback RPCs
   for (size_t i = 0; i < num_rpcs; i++) {
@@ -910,40 +966,46 @@ std::vector<XdsEnd2endTest::ConcurrentRpc> XdsEnd2endTest::SendConcurrentRpcs(
                           rpc->elapsed_time = NowFromCycleCounter() - t0;
                           bool done;
                           {
-                            absl::MutexLock lock(&mu);
+                            grpc_core::MutexLock lock(&mu);
                             done = (++completed) == num_rpcs;
                           }
                           if (done) cv.Signal();
                         });
   }
   {
-    absl::MutexLock lock(&mu);
+    grpc_core::MutexLock lock(&mu);
     cv.Wait(&mu);
   }
-  EXPECT_EQ(completed, num_rpcs);
+  EXPECT_EQ(completed, num_rpcs)
+      << " at " << debug_location.file() << ":" << debug_location.line();
   return rpcs;
 }
 
 size_t XdsEnd2endTest::WaitForAllBackends(
-    size_t start_index, size_t stop_index,
+    const grpc_core::DebugLocation& debug_location, size_t start_index,
+    size_t stop_index, std::function<void(const RpcResult&)> check_status,
     const WaitForBackendOptions& wait_options, const RpcOptions& rpc_options) {
-  size_t num_rpcs = 0;
-  auto deadline = absl::Now() + (absl::Milliseconds(wait_options.timeout_ms) *
-                                 grpc_test_slowdown_factor());
+  if (check_status == nullptr) {
+    check_status = [&](const RpcResult& result) {
+      EXPECT_TRUE(result.status.ok())
+          << "code=" << result.status.error_code()
+          << " message=" << result.status.error_message() << " at "
+          << debug_location.file() << ":" << debug_location.line();
+    };
+  }
   gpr_log(GPR_INFO,
           "========= WAITING FOR BACKENDS [%" PRIuPTR ", %" PRIuPTR
           ") ==========",
           start_index, stop_index);
-  while (!SeenAllBackends(start_index, stop_index, rpc_options.service)) {
-    Status status = SendRpc(rpc_options);
-    if (!wait_options.allow_failures) {
-      EXPECT_TRUE(status.ok()) << "code=" << status.error_code()
-                               << " message=" << status.error_message();
-    }
-    EXPECT_LE(absl::Now(), deadline);
-    if (absl::Now() >= deadline) break;
-    ++num_rpcs;
-  }
+  size_t num_rpcs = 0;
+  SendRpcsUntil(
+      debug_location,
+      [&](const RpcResult& result) {
+        ++num_rpcs;
+        check_status(result);
+        return !SeenAllBackends(start_index, stop_index, rpc_options.service);
+      },
+      wait_options.timeout_ms, rpc_options);
   if (wait_options.reset_counters) ResetBackendCounters();
   gpr_log(GPR_INFO, "Backends up; sent %" PRIuPTR " warm up requests",
           num_rpcs);
@@ -951,10 +1013,12 @@ size_t XdsEnd2endTest::WaitForAllBackends(
 }
 
 absl::optional<AdsServiceImpl::ResponseState> XdsEnd2endTest::WaitForNack(
+    const grpc_core::DebugLocation& debug_location,
     std::function<absl::optional<AdsServiceImpl::ResponseState>()> get_state,
-    StatusCode expected_status) {
+    const RpcOptions& rpc_options, StatusCode expected_status) {
   absl::optional<AdsServiceImpl::ResponseState> response_state;
-  auto deadline = absl::Now() + absl::Seconds(30);
+  auto deadline =
+      absl::Now() + (absl::Seconds(30) * grpc_test_slowdown_factor());
   auto continue_predicate = [&]() {
     if (absl::Now() >= deadline) {
       return false;
@@ -964,13 +1028,31 @@ absl::optional<AdsServiceImpl::ResponseState> XdsEnd2endTest::WaitForNack(
            response_state->state != AdsServiceImpl::ResponseState::NACKED;
   };
   do {
-    const Status status = SendRpc();
+    const Status status = SendRpc(rpc_options);
     EXPECT_EQ(expected_status, status.error_code())
         << "code=" << status.error_code()
-        << " message=" << status.error_message();
-    ;
+        << " message=" << status.error_message() << " at "
+        << debug_location.file() << ":" << debug_location.line();
   } while (continue_predicate());
   return response_state;
+}
+
+void XdsEnd2endTest::SetProtoDuration(
+    grpc_core::Duration duration, google::protobuf::Duration* duration_proto) {
+  duration *= grpc_test_slowdown_factor();
+  gpr_timespec ts = duration.as_timespec();
+  duration_proto->set_seconds(ts.tv_sec);
+  duration_proto->set_nanos(ts.tv_nsec);
+}
+
+std::string XdsEnd2endTest::MakeConnectionFailureRegex(
+    absl::string_view prefix) {
+  return absl::StrCat(
+      prefix,
+      "(UNKNOWN|UNAVAILABLE): (ipv6:%5B::1%5D|ipv4:127.0.0.1):[0-9]+: "
+      "(Failed to connect to remote host: )?"
+      "(Connection refused|Connection reset by peer|"
+      "Socket closed|FD shutdown)");
 }
 
 std::string XdsEnd2endTest::ReadFile(const char* file_path) {

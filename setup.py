@@ -29,6 +29,7 @@ from distutils import extension as _extension
 from distutils import util
 import os
 import os.path
+import pathlib
 import platform
 import re
 import shlex
@@ -75,6 +76,7 @@ UPB_GRPC_GENERATED_INCLUDE = (os.path.join('src', 'core', 'ext',
                                            'upb-generated'),)
 UPBDEFS_GRPC_GENERATED_INCLUDE = (os.path.join('src', 'core', 'ext',
                                                'upbdefs-generated'),)
+UTF8_RANGE_INCLUDE = (os.path.join('third_party', 'utf8_range'),)
 XXHASH_INCLUDE = (os.path.join('third_party', 'xxhash'),)
 ZLIB_INCLUDE = (os.path.join('third_party', 'zlib'),)
 README = os.path.join(PYTHON_STEM, 'README.rst')
@@ -100,12 +102,11 @@ CLASSIFIERS = [
     'Development Status :: 5 - Production/Stable',
     'Programming Language :: Python',
     'Programming Language :: Python :: 3',
-    'Programming Language :: Python :: 3.5',
-    'Programming Language :: Python :: 3.6',
     'Programming Language :: Python :: 3.7',
     'Programming Language :: Python :: 3.8',
     'Programming Language :: Python :: 3.9',
     'Programming Language :: Python :: 3.10',
+    'Programming Language :: Python :: 3.11',
     'License :: OSI Approved :: Apache Software License',
 ]
 
@@ -156,6 +157,11 @@ BUILD_WITH_SYSTEM_CARES = _env_bool_value('GRPC_PYTHON_BUILD_SYSTEM_CARES',
 # runtime, the shared library must be installed
 BUILD_WITH_SYSTEM_RE2 = _env_bool_value('GRPC_PYTHON_BUILD_SYSTEM_RE2', 'False')
 
+# Export this variable to use the system installation of abseil. You need to
+# have the header files installed (in /usr/include/absl) and during
+# runtime, the shared library must be installed
+BUILD_WITH_SYSTEM_ABSL = os.environ.get('GRPC_PYTHON_BUILD_SYSTEM_ABSL', False)
+
 # Export this variable to force building the python extension with a statically linked libstdc++.
 # At least on linux, this is normally not needed as we can build manylinux-compatible wheels on linux just fine
 # without statically linking libstdc++ (which leads to a slight increase in the wheel size).
@@ -201,7 +207,7 @@ def check_linker_need_libatomic():
     code_test = (b'#include <atomic>\n' +
                  b'int main() { return std::atomic<int64_t>{}; }')
     cxx = shlex.split(os.environ.get('CXX', 'c++'))
-    cpp_test = subprocess.Popen(cxx + ['-x', 'c++', '-std=c++11', '-'],
+    cpp_test = subprocess.Popen(cxx + ['-x', 'c++', '-std=c++14', '-'],
                                 stdin=PIPE,
                                 stdout=PIPE,
                                 stderr=PIPE)
@@ -210,11 +216,11 @@ def check_linker_need_libatomic():
         return False
     # Double-check to see if -latomic actually can solve the problem.
     # https://github.com/grpc/grpc/issues/22491
-    cpp_test = subprocess.Popen(
-        [cxx, '-x', 'c++', '-std=c++11', '-', '-latomic'],
-        stdin=PIPE,
-        stdout=PIPE,
-        stderr=PIPE)
+    cpp_test = subprocess.Popen(cxx +
+                                ['-x', 'c++', '-std=c++14', '-', '-latomic'],
+                                stdin=PIPE,
+                                stdout=PIPE,
+                                stderr=PIPE)
     cpp_test.communicate(input=code_test)
     return cpp_test.returncode == 0
 
@@ -229,7 +235,7 @@ def check_linker_need_libatomic():
 EXTRA_ENV_COMPILE_ARGS = os.environ.get('GRPC_PYTHON_CFLAGS', None)
 EXTRA_ENV_LINK_ARGS = os.environ.get('GRPC_PYTHON_LDFLAGS', None)
 if EXTRA_ENV_COMPILE_ARGS is None:
-    EXTRA_ENV_COMPILE_ARGS = ' -std=c++11'
+    EXTRA_ENV_COMPILE_ARGS = ' -std=c++14'
     if 'win32' in sys.platform:
         if sys.version_info < (3, 5):
             EXTRA_ENV_COMPILE_ARGS += ' -D_hypot=hypot'
@@ -246,7 +252,7 @@ if EXTRA_ENV_COMPILE_ARGS is None:
             # available dynamically
             EXTRA_ENV_COMPILE_ARGS += ' /MT'
     elif "linux" in sys.platform:
-        EXTRA_ENV_COMPILE_ARGS += ' -std=gnu99 -fvisibility=hidden -fno-wrapv -fno-exceptions'
+        EXTRA_ENV_COMPILE_ARGS += ' -fvisibility=hidden -fno-wrapv -fno-exceptions'
     elif "darwin" in sys.platform:
         EXTRA_ENV_COMPILE_ARGS += ' -stdlib=libc++ -fvisibility=hidden -fno-wrapv -fno-exceptions -DHAVE_UNISTD_H'
 
@@ -298,12 +304,18 @@ if BUILD_WITH_SYSTEM_RE2:
     CORE_C_FILES = filter(lambda x: 'third_party/re2' not in x, CORE_C_FILES)
     RE2_INCLUDE = (os.path.join('/usr', 'include', 're2'),)
 
+if BUILD_WITH_SYSTEM_ABSL:
+    CORE_C_FILES = filter(lambda x: 'third_party/abseil-cpp' not in x,
+                          CORE_C_FILES)
+    ABSL_INCLUDE = (os.path.join('/usr', 'include'),)
+
 EXTENSION_INCLUDE_DIRECTORIES = ((PYTHON_STEM,) + CORE_INCLUDE + ABSL_INCLUDE +
                                  ADDRESS_SORTING_INCLUDE + CARES_INCLUDE +
                                  RE2_INCLUDE + SSL_INCLUDE + UPB_INCLUDE +
                                  UPB_GRPC_GENERATED_INCLUDE +
                                  UPBDEFS_GRPC_GENERATED_INCLUDE +
-                                 XXHASH_INCLUDE + ZLIB_INCLUDE)
+                                 UTF8_RANGE_INCLUDE + XXHASH_INCLUDE +
+                                 ZLIB_INCLUDE)
 
 EXTENSION_LIBRARIES = ()
 if "linux" in sys.platform:
@@ -328,6 +340,9 @@ if BUILD_WITH_SYSTEM_CARES:
     EXTENSION_LIBRARIES += ('cares',)
 if BUILD_WITH_SYSTEM_RE2:
     EXTENSION_LIBRARIES += ('re2',)
+if BUILD_WITH_SYSTEM_ABSL:
+    EXTENSION_LIBRARIES += tuple(
+        lib.stem[3:] for lib in pathlib.Path('/usr').glob('lib*/libabsl_*.so'))
 
 DEFINE_MACROS = (('_WIN32_WINNT', 0x600),)
 asm_files = []
@@ -362,7 +377,9 @@ if BUILD_WITH_BORING_SSL_ASM and not BUILD_WITH_SYSTEM_OPENSSL:
     elif LINUX_AARCH64 == boringssl_asm_platform:
         asm_key = 'crypto_linux_aarch64'
     elif "mac" in boringssl_asm_platform and "x86_64" in boringssl_asm_platform:
-        asm_key = 'crypto_mac_x86_64'
+        asm_key = 'crypto_apple_x86_64'
+    elif "mac" in boringssl_asm_platform and "arm64" in boringssl_asm_platform:
+        asm_key = 'crypto_apple_aarch64'
     else:
         print("ASM Builds for BoringSSL currently not supported on:",
               boringssl_asm_platform)
@@ -395,6 +412,10 @@ else:
         ('HAVE_CONFIG_H', 1),
         ('GRPC_ENABLE_FORK_SUPPORT', 1),
     )
+
+# Fix for multiprocessing support on Apple devices.
+# TODO(vigneshbabu): Remove this once the poll poller gets fork support.
+DEFINE_MACROS += (('GRPC_DO_NOT_INSTANTIATE_POSIX_POLLER', 1),)
 
 LDFLAGS = tuple(EXTRA_LINK_ARGS)
 CFLAGS = tuple(EXTRA_COMPILE_ARGS)
@@ -468,19 +489,14 @@ PACKAGE_DIRECTORIES = {
     '': PYTHON_STEM,
 }
 
-INSTALL_REQUIRES = (
-    "six>=1.5.2",
-    "futures>=2.2.0; python_version<'3.2'",
-    "enum34>=1.0.4; python_version<'3.4'",
-)
+INSTALL_REQUIRES = ()
+
 EXTRAS_REQUIRES = {
     'protobuf': 'grpcio-tools>={version}'.format(version=grpc_version.VERSION),
 }
 
 SETUP_REQUIRES = INSTALL_REQUIRES + (
-    'Sphinx~=1.8.1',
-    'six>=1.10',
-) if ENABLE_DOCUMENTATION_BUILD else ()
+    'Sphinx~=1.8.1',) if ENABLE_DOCUMENTATION_BUILD else ()
 
 try:
     import Cython
@@ -531,14 +547,20 @@ setuptools.setup(
     author='The gRPC Authors',
     author_email='grpc-io@googlegroups.com',
     url='https://grpc.io',
+    project_urls={
+        "Source Code": "https://github.com/grpc/grpc",
+        "Bug Tracker": "https://github.com/grpc/grpc/issues",
+        'Documentation': 'https://grpc.github.io/grpc/python',
+    },
     license=LICENSE,
     classifiers=CLASSIFIERS,
+    long_description_content_type='text/x-rst',
     long_description=open(README).read(),
     ext_modules=CYTHON_EXTENSION_MODULES,
     packages=list(PACKAGES),
     package_dir=PACKAGE_DIRECTORIES,
     package_data=PACKAGE_DATA,
-    python_requires='>=3.6',
+    python_requires='>=3.7',
     install_requires=INSTALL_REQUIRES,
     extras_require=EXTRAS_REQUIRES,
     setup_requires=SETUP_REQUIRES,
