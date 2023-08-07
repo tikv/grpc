@@ -535,6 +535,25 @@ GRPCXX_PUBLIC_HDRS = [
 ]
 
 grpc_cc_library(
+    name = "grpc_rs",
+    srcs = [
+        "//:src/rs/stats.cc",
+    ],
+    language = "c++",
+    public_hdrs = [
+        "include/grpcrs/stats.h",
+    ],
+    tags = [
+        "nofixdeps",
+    ],
+    visibility = ["@grpc:public"],
+    deps = [
+        "stats",
+        "//src/core:slice",
+    ],
+)
+
+grpc_cc_library(
     name = "grpc_unsecure",
     srcs = [
         "//src/core:lib/surface/init.cc",
@@ -560,6 +579,7 @@ grpc_cc_library(
         "grpc_client_channel",
         "grpc_common",
         "grpc_http_filters",
+        "grpc_rs",
         "grpc_security_base",
         "grpc_trace",
         "http_connect_handshaker",
@@ -636,6 +656,7 @@ grpc_cc_library(
         "grpc_http_filters",
         "grpc_jwt_credentials",
         "grpc_public_hdrs",
+        "grpc_rs",
         "grpc_security_base",
         "grpc_trace",
         "http_connect_handshaker",
