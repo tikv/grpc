@@ -2344,6 +2344,7 @@ add_library(grpc
   src/core/tsi/ssl_transport_security_utils.cc
   src/core/tsi/transport_security.cc
   src/core/tsi/transport_security_grpc.cc
+  src/rs/stats.cc
 )
 
 target_compile_features(grpc PUBLIC cxx_std_14)
@@ -2475,6 +2476,7 @@ foreach(_hdr
   include/grpc/support/thd_id.h
   include/grpc/support/time.h
   include/grpc/support/workaround_list.h
+  include/grpcrs/stats.h
 )
   string(REPLACE "include/" "" _path ${_hdr})
   get_filename_component(_path ${_path} PATH)
@@ -2987,6 +2989,7 @@ add_library(grpc_unsecure
   src/core/tsi/local_transport_security.cc
   src/core/tsi/transport_security.cc
   src/core/tsi/transport_security_grpc.cc
+  src/rs/stats.cc
 )
 
 target_compile_features(grpc_unsecure PUBLIC cxx_std_14)
@@ -3117,6 +3120,7 @@ foreach(_hdr
   include/grpc/support/thd_id.h
   include/grpc/support/time.h
   include/grpc/support/workaround_list.h
+  include/grpcrs/stats.h
 )
   string(REPLACE "include/" "" _path ${_hdr})
   get_filename_component(_path ${_path} PATH)
