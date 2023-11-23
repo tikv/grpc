@@ -445,14 +445,22 @@ static void on_read(void* arg, grpc_error_handle err) {
               addr_uri->c_str());
     }
 
+    // addr_str format: ipv4/ipv6:ipv6:port
+    std::size_t start = addr_str.find_first_of(":") + 1;
+    std::size_t end = addr_str.find(":", start);
+    std::string ip = addr_str.substr(start, end - start);
+
     std::string name = absl::StrCat("tcp-server-connection:", addr_uri.value());
     grpc_fd* fdobj = grpc_fd_create(fd, name.c_str(), true);
 
-    read_notifier_pollset = (*(sp->server->pollsets))
-        [static_cast<size_t>(gpr_atm_no_barrier_fetch_add(
-             &sp->server->next_pollset_to_assign, 1)) %
-         sp->server->pollsets->size()];
+    std::size_t start_idx = static_cast<size_t>(rand()) % sp->server->pollsets->size();
+    if (!gpr_atm_no_barrier_cas(&sp->server->next_pollset_to_assign_ids[ip],0,start_idx)){
+      start_idx=static_cast<size_t>(gpr_atm_no_barrier_fetch_add(
+            &sp->server->next_pollset_to_assign_ids[ip], 1)) %
+        sp->server->pollsets->size();
+    }
 
+    read_notifier_pollset = (*(sp->server->pollsets))[start_idx];
     grpc_pollset_add_fd(read_notifier_pollset, fdobj);
 
     // Create acceptor.

@@ -32,6 +32,7 @@
 #include "src/core/lib/iomgr/tcp_server.h"
 #include "src/core/lib/iomgr/timer.h"
 #include "src/core/lib/resource_quota/memory_quota.h"
+#include <map>
 
 // one listening port
 typedef struct grpc_tcp_listener {
@@ -98,8 +99,8 @@ struct grpc_tcp_server {
   // owned by this struct
   const std::vector<grpc_pollset*>* pollsets = nullptr;
 
-  // next pollset to assign a channel to
-  gpr_atm next_pollset_to_assign = 0;
+  // next pollset to assign a channel to, it is a map from pollset name to ip address.
+  std::map<std::string, gpr_atm>  next_pollset_to_assign_ids;
 
   // Contains config extracted from channel args for this server
   grpc_core::PosixTcpOptions options;
