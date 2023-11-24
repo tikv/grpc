@@ -986,6 +986,26 @@ static grpc_event cq_next(grpc_completion_queue* cq, gpr_timespec deadline,
   for (;;) {
     grpc_millis iteration_deadline = deadline_millis;
 
+    /* Attempting a 0-timeout poll first, send and receive eagerly.
+     */
+    if (cqd->queue.num_items() % 2 == 0) {
+      gpr_mu_lock(cq->mu);
+      cq->num_polls++;
+      grpc_error_handle err = cq->poller_vtable->work(
+          POLLSET_FROM_CQ(cq), nullptr, 0);
+      gpr_mu_unlock(cq->mu);
+
+      if (err != GRPC_ERROR_NONE) {
+        gpr_log(GPR_ERROR, "Completion queue next failed: %s",
+                grpc_error_std_string(err).c_str());
+        GRPC_ERROR_UNREF(err);
+        ret.type = GRPC_QUEUE_TIMEOUT;
+        ret.success = 0;
+        dump_pending_tags(cq);
+        break;
+      }
+    }
+
     if (is_finished_arg.stolen_completion != nullptr) {
       grpc_cq_completion* c = is_finished_arg.stolen_completion;
       is_finished_arg.stolen_completion = nullptr;
