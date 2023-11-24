@@ -264,6 +264,7 @@ class Server::RealRequestMatcher : public RequestMatcherInterface {
 
   void MatchOrQueue(size_t start_request_queue_index,
                     CallData* calld) override {
+    start_request_queue_index = static_cast<size_t>(rand()) % requests_per_cq_.size();
     for (size_t i = 0; i < requests_per_cq_.size(); i++) {
       size_t cq_idx = (start_request_queue_index + i) % requests_per_cq_.size();
       RequestedCall* rc =
