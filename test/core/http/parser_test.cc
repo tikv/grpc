@@ -21,7 +21,6 @@
 #include <stdarg.h>
 #include <string.h>
 
-#include <initializer_list>
 #include <string>
 
 #include "absl/status/status.h"
@@ -31,8 +30,8 @@
 #include <grpc/support/alloc.h>
 
 #include "src/core/lib/gpr/useful.h"
-#include "test/core/util/slice_splitter.h"
-#include "test/core/util/test_config.h"
+#include "test/core/test_util/slice_splitter.h"
+#include "test/core/test_util/test_config.h"
 
 static void test_request_succeeds(grpc_slice_split_mode split_mode,
                                   const char* request_text,

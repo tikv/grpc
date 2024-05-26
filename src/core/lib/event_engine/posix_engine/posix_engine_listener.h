@@ -14,8 +14,6 @@
 #ifndef GRPC_SRC_CORE_LIB_EVENT_ENGINE_POSIX_ENGINE_POSIX_ENGINE_LISTENER_H
 #define GRPC_SRC_CORE_LIB_EVENT_ENGINE_POSIX_ENGINE_POSIX_ENGINE_LISTENER_H
 
-#include <grpc/support/port_platform.h>
-
 #include <string.h>
 
 #include <atomic>
@@ -33,6 +31,7 @@
 #include <grpc/event_engine/event_engine.h>
 #include <grpc/event_engine/memory_allocator.h>
 #include <grpc/event_engine/slice_buffer.h>
+#include <grpc/support/port_platform.h>
 
 #include "src/core/lib/event_engine/posix.h"
 #include "src/core/lib/gprpp/sync.h"
@@ -110,6 +109,8 @@ class PosixEngineListenerImpl
     }
     ListenerSocketsContainer::ListenerSocket& Socket() { return socket_; }
     ~AsyncConnectionAcceptor() {
+      // If uds socket, unlink it so that the corresponding file is deleted.
+      UnlinkIfUnixDomainSocket(*socket_.sock.LocalAddress());
       handle_->OrphanHandle(nullptr, nullptr, "");
       delete notify_on_accept_;
     }

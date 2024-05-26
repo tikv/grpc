@@ -16,15 +16,16 @@
 //
 //
 
-#include <grpc/support/port_platform.h>
-
 #include "src/core/lib/gpr/useful.h"
 
 #include <stdint.h>
 
 #include <limits>
+#include <memory>
 
 #include "gtest/gtest.h"
+
+#include <grpc/support/port_platform.h>
 
 namespace grpc_core {
 

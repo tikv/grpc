@@ -20,7 +20,9 @@
 #include "test/core/end2end/end2end_tests.h"
 
 #include <regex>
+#include <tuple>
 
+#include "absl/log/check.h"
 #include "absl/memory/memory.h"
 #include "absl/random/random.h"
 
@@ -118,8 +120,8 @@ void CoreEnd2endTest::TearDown() {
       gpr_log(GPR_ERROR, "Timeout in waiting for gRPC shutdown");
     }
   }
-  GPR_ASSERT(client_ == nullptr);
-  GPR_ASSERT(server_ == nullptr);
+  CHECK_EQ(client_, nullptr);
+  CHECK_EQ(server_, nullptr);
   initialized_ = false;
 }
 
@@ -136,25 +138,34 @@ grpc_op CoreEnd2endTest::IncomingMetadata::MakeOp() {
   return op;
 }
 
+std::string CoreEnd2endTest::IncomingMetadata::GetSuccessfulStateString() {
+  std::string out = "incoming_metadata: {";
+  for (size_t i = 0; i < metadata_->count; i++) {
+    absl::StrAppend(&out, StringViewFromSlice(metadata_->metadata[i].key), ":",
+                    StringViewFromSlice(metadata_->metadata[i].value), ",");
+  }
+  return out + "}";
+}
+
 std::string CoreEnd2endTest::IncomingMessage::payload() const {
   Slice out;
   if (payload_->data.raw.compression > GRPC_COMPRESS_NONE) {
     grpc_slice_buffer decompressed_buffer;
     grpc_slice_buffer_init(&decompressed_buffer);
-    GPR_ASSERT(grpc_msg_decompress(payload_->data.raw.compression,
+    CHECK(grpc_msg_decompress(payload_->data.raw.compression,
                                    &payload_->data.raw.slice_buffer,
                                    &decompressed_buffer));
     grpc_byte_buffer* rbb = grpc_raw_byte_buffer_create(
         decompressed_buffer.slices, decompressed_buffer.count);
     grpc_byte_buffer_reader reader;
-    GPR_ASSERT(grpc_byte_buffer_reader_init(&reader, rbb));
+    CHECK(grpc_byte_buffer_reader_init(&reader, rbb));
     out = Slice(grpc_byte_buffer_reader_readall(&reader));
     grpc_byte_buffer_reader_destroy(&reader);
     grpc_byte_buffer_destroy(rbb);
     grpc_slice_buffer_destroy(&decompressed_buffer);
   } else {
     grpc_byte_buffer_reader reader;
-    GPR_ASSERT(grpc_byte_buffer_reader_init(&reader, payload_));
+    CHECK(grpc_byte_buffer_reader_init(&reader, payload_));
     out = Slice(grpc_byte_buffer_reader_readall(&reader));
     grpc_byte_buffer_reader_destroy(&reader);
   }
@@ -173,6 +184,25 @@ absl::optional<std::string>
 CoreEnd2endTest::IncomingStatusOnClient::GetTrailingMetadata(
     absl::string_view key) const {
   return FindInMetadataArray(data_->trailing_metadata, key);
+}
+
+std::string
+CoreEnd2endTest::IncomingStatusOnClient::GetSuccessfulStateString() {
+  std::string out = absl::StrCat(
+      "status_on_client: status=", data_->status,
+      " msg=", data_->status_details.as_string_view(), " trailing_metadata={");
+  for (size_t i = 0; i < data_->trailing_metadata.count; i++) {
+    absl::StrAppend(
+        &out, StringViewFromSlice(data_->trailing_metadata.metadata[i].key),
+        ": ", StringViewFromSlice(data_->trailing_metadata.metadata[i].value),
+        ",");
+  }
+  return out + "}";
+}
+
+std::string CoreEnd2endTest::IncomingMessage::GetSuccessfulStateString() {
+  if (payload_ == nullptr) return "message: empty";
+  return absl::StrCat("message: ", payload().size(), "b uncompressed");
 }
 
 grpc_op CoreEnd2endTest::IncomingStatusOnClient::MakeOp() {
@@ -276,23 +306,54 @@ CoreEnd2endTest::Call CoreEnd2endTest::ClientCallBuilder::Create() {
     absl::optional<Slice> host;
     if (u->host.has_value()) host = Slice::FromCopiedString(*u->host);
     test_.ForceInitialized();
-    return Call(grpc_channel_create_call(
-        test_.client(), parent_call_, propagation_mask_, test_.cq(),
-        Slice::FromCopiedString(u->method).c_slice(),
-        host.has_value() ? &host->c_slice() : nullptr, deadline_, nullptr));
+    return Call(
+        grpc_channel_create_call(
+            test_.client(), parent_call_, propagation_mask_, test_.cq(),
+            Slice::FromCopiedString(u->method).c_slice(),
+            host.has_value() ? &host->c_slice() : nullptr, deadline_, nullptr),
+        &test_);
   } else {
     return Call(grpc_channel_create_registered_call(
-        test_.client(), parent_call_, propagation_mask_, test_.cq(),
-        absl::get<void*>(call_selector_), deadline_, nullptr));
+                    test_.client(), parent_call_, propagation_mask_, test_.cq(),
+                    absl::get<void*>(call_selector_), deadline_, nullptr),
+                &test_);
   }
 }
 
+CoreEnd2endTest::ServerRegisteredMethod::ServerRegisteredMethod(
+    CoreEnd2endTest* test, absl::string_view name,
+    grpc_server_register_method_payload_handling payload_handling) {
+  CHECK_EQ(test->server_, nullptr);
+  test->pre_server_start_ = [old = std::move(test->pre_server_start_),
+                             handle = handle_, name = std::string(name),
+                             payload_handling](grpc_server* server) mutable {
+    *handle = grpc_server_register_method(server, name.c_str(), nullptr,
+                                          payload_handling, 0);
+    old(server);
+  };
+}
+
 CoreEnd2endTest::IncomingCall::IncomingCall(CoreEnd2endTest& test, int tag)
-    : impl_(std::make_unique<Impl>()) {
+    : impl_(std::make_unique<Impl>(&test)) {
   test.ForceInitialized();
-  grpc_server_request_call(test.server(), impl_->call.call_ptr(),
-                           &impl_->call_details, &impl_->request_metadata,
-                           test.cq(), test.cq(), CqVerifier::tag(tag));
+  EXPECT_EQ(
+      grpc_server_request_call(test.server(), impl_->call.call_ptr(),
+                               &impl_->call_details, &impl_->request_metadata,
+                               test.cq(), test.cq(), CqVerifier::tag(tag)),
+      GRPC_CALL_OK);
+}
+
+CoreEnd2endTest::IncomingCall::IncomingCall(CoreEnd2endTest& test, void* method,
+                                            IncomingMessage* message, int tag)
+    : impl_(std::make_unique<Impl>(&test)) {
+  test.ForceInitialized();
+  impl_->call_details.method = grpc_empty_slice();
+  EXPECT_EQ(grpc_server_request_registered_call(
+                test.server(), method, impl_->call.call_ptr(),
+                &impl_->call_details.deadline, &impl_->request_metadata,
+                message == nullptr ? nullptr : &message->payload_, test.cq(),
+                test.cq(), CqVerifier::tag(tag)),
+            GRPC_CALL_OK);
 }
 
 absl::optional<std::string> CoreEnd2endTest::IncomingCall::GetInitialMetadata(
@@ -314,14 +375,14 @@ void CoreEnd2endTestRegistry::RegisterTest(absl::string_view suite,
                                            SourceLocation) {
   if (absl::StartsWith(name, "DISABLED_")) return;
   auto& tests = tests_by_suite_[suite];
-  GPR_ASSERT(tests.count(name) == 0);
+  CHECK_EQ(tests.count(name), 0u);
   tests[name] = std::move(make_test);
 }
 
 void CoreEnd2endTestRegistry::RegisterSuite(
     absl::string_view suite, std::vector<const CoreTestConfiguration*> configs,
     SourceLocation) {
-  GPR_ASSERT(suites_.count(suite) == 0);
+  CHECK_EQ(suites_.count(suite), 0u);
   suites_[suite] = std::move(configs);
 }
 
@@ -338,21 +399,18 @@ std::vector<absl::string_view> KeysFrom(const Map& map) {
 }  // namespace
 
 std::vector<CoreEnd2endTestRegistry::Test> CoreEnd2endTestRegistry::AllTests() {
-  if (tests_by_suite_.size() != suites_.size()) {
-    CrashWithStdio(absl::StrCat(
-        "ERROR: Some suites are not registered:\n",
-        "TESTS use suites: ", absl::StrJoin(KeysFrom(tests_by_suite_), ", "),
-        "\nSUITES have: ", absl::StrJoin(KeysFrom(tests_by_suite_), ", "),
-        "\n"));
-  }
-  GPR_ASSERT(tests_by_suite_.size() == suites_.size());
   std::vector<Test> tests;
+  // Sort inputs to ensure outputs are deterministic
+  for (auto& suite_configs : suites_) {
+    std::sort(suite_configs.second.begin(), suite_configs.second.end(),
+              [](const auto* a, const auto* b) { return a->name < b->name; });
+  }
   for (const auto& suite_configs : suites_) {
     if (suite_configs.second.empty()) {
-      CrashWithStdio(
-          absl::StrCat("Suite ", suite_configs.first, " has no tests"));
+      fprintf(
+          stderr, "%s\n",
+          absl::StrCat("Suite ", suite_configs.first, " has no tests").c_str());
     }
-    GPR_ASSERT(tests_by_suite_.count(suite_configs.first) == 1);
     for (const auto& test_factory : tests_by_suite_[suite_configs.first]) {
       for (const auto* config : suite_configs.second) {
         tests.push_back(Test{suite_configs.first, test_factory.first, config,

@@ -17,14 +17,16 @@
 #ifndef GRPC_SRC_CORE_LIB_GPRPP_DUAL_REF_COUNTED_H
 #define GRPC_SRC_CORE_LIB_GPRPP_DUAL_REF_COUNTED_H
 
-#include <grpc/support/port_platform.h>
-
 #include <atomic>
 #include <cstdint>
 
+#include "absl/log/check.h"
+
 #include <grpc/support/log.h>
+#include <grpc/support/port_platform.h>
 
 #include "src/core/lib/gprpp/debug_location.h"
+#include "src/core/lib/gprpp/down_cast.h"
 #include "src/core/lib/gprpp/orphanable.h"
 #include "src/core/lib/gprpp/ref_counted_ptr.h"
 
@@ -39,25 +41,46 @@ namespace grpc_core {
 //
 // Each class of refs can be incremented and decremented independently.
 // Objects start with 1 strong ref and 0 weak refs at instantiation.
-// When the strong refcount reaches 0, the object's Orphan() method is called.
+// When the strong refcount reaches 0, the object's Orphaned() method is called.
 // When the weak refcount reaches 0, the object is destroyed.
 //
 // This will be used by CRTP (curiously-recurring template pattern), e.g.:
 //   class MyClass : public RefCounted<MyClass> { ... };
 template <typename Child>
-class DualRefCounted : public Orphanable {
+class DualRefCounted {
  public:
-  ~DualRefCounted() override = default;
+  // Not copyable nor movable.
+  DualRefCounted(const DualRefCounted&) = delete;
+  DualRefCounted& operator=(const DualRefCounted&) = delete;
 
-  RefCountedPtr<Child> Ref() GRPC_MUST_USE_RESULT {
+  virtual ~DualRefCounted() = default;
+
+  GRPC_MUST_USE_RESULT RefCountedPtr<Child> Ref() {
     IncrementRefCount();
     return RefCountedPtr<Child>(static_cast<Child*>(this));
   }
-
-  RefCountedPtr<Child> Ref(const DebugLocation& location,
-                           const char* reason) GRPC_MUST_USE_RESULT {
+  GRPC_MUST_USE_RESULT RefCountedPtr<Child> Ref(const DebugLocation& location,
+                                                const char* reason) {
     IncrementRefCount(location, reason);
     return RefCountedPtr<Child>(static_cast<Child*>(this));
+  }
+
+  template <
+      typename Subclass,
+      std::enable_if_t<std::is_base_of<Child, Subclass>::value, bool> = true>
+  RefCountedPtr<Subclass> RefAsSubclass() {
+    IncrementRefCount();
+    return RefCountedPtr<Subclass>(
+        DownCast<Subclass*>(static_cast<Child*>(this)));
+  }
+  template <
+      typename Subclass,
+      std::enable_if_t<std::is_base_of<Child, Subclass>::value, bool> = true>
+  RefCountedPtr<Subclass> RefAsSubclass(const DebugLocation& location,
+                                        const char* reason) {
+    IncrementRefCount(location, reason);
+    return RefCountedPtr<Subclass>(
+        DownCast<Subclass*>(static_cast<Child*>(this)));
   }
 
   void Unref() {
@@ -71,10 +94,10 @@ class DualRefCounted : public Orphanable {
       gpr_log(GPR_INFO, "%s:%p unref %d -> %d, weak_ref %d -> %d", trace_, this,
               strong_refs, strong_refs - 1, weak_refs, weak_refs + 1);
     }
-    GPR_ASSERT(strong_refs > 0);
+    CHECK_GT(strong_refs, 0u);
 #endif
     if (GPR_UNLIKELY(strong_refs == 1)) {
-      Orphan();
+      Orphaned();
     }
     // Now drop the weak ref.
     WeakUnref();
@@ -90,20 +113,20 @@ class DualRefCounted : public Orphanable {
               trace_, this, location.file(), location.line(), strong_refs,
               strong_refs - 1, weak_refs, weak_refs + 1, reason);
     }
-    GPR_ASSERT(strong_refs > 0);
+    CHECK_GT(strong_refs, 0u);
 #else
     // Avoid unused-parameter warnings for debug-only parameters
     (void)location;
     (void)reason;
 #endif
     if (GPR_UNLIKELY(strong_refs == 1)) {
-      Orphan();
+      Orphaned();
     }
     // Now drop the weak ref.
     WeakUnref(location, reason);
   }
 
-  RefCountedPtr<Child> RefIfNonZero() GRPC_MUST_USE_RESULT {
+  GRPC_MUST_USE_RESULT RefCountedPtr<Child> RefIfNonZero() {
     uint64_t prev_ref_pair = refs_.load(std::memory_order_acquire);
     do {
       const uint32_t strong_refs = GetStrongRefs(prev_ref_pair);
@@ -120,9 +143,8 @@ class DualRefCounted : public Orphanable {
         std::memory_order_acq_rel, std::memory_order_acquire));
     return RefCountedPtr<Child>(static_cast<Child*>(this));
   }
-
-  RefCountedPtr<Child> RefIfNonZero(const DebugLocation& location,
-                                    const char* reason) GRPC_MUST_USE_RESULT {
+  GRPC_MUST_USE_RESULT RefCountedPtr<Child> RefIfNonZero(
+      const DebugLocation& location, const char* reason) {
     uint64_t prev_ref_pair = refs_.load(std::memory_order_acquire);
     do {
       const uint32_t strong_refs = GetStrongRefs(prev_ref_pair);
@@ -146,15 +168,32 @@ class DualRefCounted : public Orphanable {
     return RefCountedPtr<Child>(static_cast<Child*>(this));
   }
 
-  WeakRefCountedPtr<Child> WeakRef() GRPC_MUST_USE_RESULT {
+  GRPC_MUST_USE_RESULT WeakRefCountedPtr<Child> WeakRef() {
     IncrementWeakRefCount();
     return WeakRefCountedPtr<Child>(static_cast<Child*>(this));
   }
-
-  WeakRefCountedPtr<Child> WeakRef(const DebugLocation& location,
-                                   const char* reason) GRPC_MUST_USE_RESULT {
+  GRPC_MUST_USE_RESULT WeakRefCountedPtr<Child> WeakRef(
+      const DebugLocation& location, const char* reason) {
     IncrementWeakRefCount(location, reason);
     return WeakRefCountedPtr<Child>(static_cast<Child*>(this));
+  }
+
+  template <
+      typename Subclass,
+      std::enable_if_t<std::is_base_of<Child, Subclass>::value, bool> = true>
+  WeakRefCountedPtr<Subclass> WeakRefAsSubclass() {
+    IncrementWeakRefCount();
+    return WeakRefCountedPtr<Subclass>(
+        DownCast<Subclass*>(static_cast<Child*>(this)));
+  }
+  template <
+      typename Subclass,
+      std::enable_if_t<std::is_base_of<Child, Subclass>::value, bool> = true>
+  WeakRefCountedPtr<Subclass> WeakRefAsSubclass(const DebugLocation& location,
+                                                const char* reason) {
+    IncrementWeakRefCount(location, reason);
+    return WeakRefCountedPtr<Subclass>(
+        DownCast<Subclass*>(static_cast<Child*>(this)));
   }
 
   void WeakUnref() {
@@ -173,7 +212,7 @@ class DualRefCounted : public Orphanable {
       gpr_log(GPR_INFO, "%s:%p weak_unref %d -> %d (refs=%d)", trace, this,
               weak_refs, weak_refs - 1, strong_refs);
     }
-    GPR_ASSERT(weak_refs > 0);
+    CHECK_GT(weak_refs, 0u);
 #endif
     if (GPR_UNLIKELY(prev_ref_pair == MakeRefPair(0, 1))) {
       delete static_cast<Child*>(this);
@@ -196,7 +235,7 @@ class DualRefCounted : public Orphanable {
               this, location.file(), location.line(), weak_refs, weak_refs - 1,
               strong_refs, reason);
     }
-    GPR_ASSERT(weak_refs > 0);
+    CHECK_GT(weak_refs, 0u);
 #else
     // Avoid unused-parameter warnings for debug-only parameters
     (void)location;
@@ -206,10 +245,6 @@ class DualRefCounted : public Orphanable {
       delete static_cast<Child*>(this);
     }
   }
-
-  // Not copyable nor movable.
-  DualRefCounted(const DualRefCounted&) = delete;
-  DualRefCounted& operator=(const DualRefCounted&) = delete;
 
  protected:
   // Note: Tracing is a no-op in non-debug builds.
@@ -227,6 +262,9 @@ class DualRefCounted : public Orphanable {
 #endif
         refs_(MakeRefPair(initial_refcount, 0)) {
   }
+
+  // Ref count has dropped to zero, so the object is now orphaned.
+  virtual void Orphaned() = 0;
 
  private:
   // Allow RefCountedPtr<> to access IncrementRefCount().
@@ -253,7 +291,7 @@ class DualRefCounted : public Orphanable {
         refs_.fetch_add(MakeRefPair(1, 0), std::memory_order_relaxed);
     const uint32_t strong_refs = GetStrongRefs(prev_ref_pair);
     const uint32_t weak_refs = GetWeakRefs(prev_ref_pair);
-    GPR_ASSERT(strong_refs != 0);
+    CHECK_NE(strong_refs, 0u);
     if (trace_ != nullptr) {
       gpr_log(GPR_INFO, "%s:%p ref %d -> %d; (weak_refs=%d)", trace_, this,
               strong_refs, strong_refs + 1, weak_refs);
@@ -268,7 +306,7 @@ class DualRefCounted : public Orphanable {
         refs_.fetch_add(MakeRefPair(1, 0), std::memory_order_relaxed);
     const uint32_t strong_refs = GetStrongRefs(prev_ref_pair);
     const uint32_t weak_refs = GetWeakRefs(prev_ref_pair);
-    GPR_ASSERT(strong_refs != 0);
+    CHECK_NE(strong_refs, 0u);
     if (trace_ != nullptr) {
       gpr_log(GPR_INFO, "%s:%p %s:%d ref %d -> %d (weak_refs=%d) %s", trace_,
               this, location.file(), location.line(), strong_refs,

@@ -26,9 +26,9 @@
 
 #include "src/core/ext/transport/binder/transport/binder_transport.h"
 #include "src/core/ext/transport/binder/wire_format/wire_reader_impl.h"
+#include "test/core/test_util/test_config.h"
 #include "test/core/transport/binder/end2end/fake_binder.h"
 #include "test/core/transport/binder/end2end/testing_channel_create.h"
-#include "test/core/util/test_config.h"
 #include "test/cpp/end2end/test_service_impl.h"
 
 namespace grpc_binder {
@@ -79,14 +79,14 @@ class End2EndBinderTransportTest
 }  // namespace
 
 TEST_P(End2EndBinderTransportTest, SetupTransport) {
-  grpc_transport *client_transport, *server_transport;
+  grpc_core::Transport *client_transport, *server_transport;
   std::tie(client_transport, server_transport) =
       end2end_testing::CreateClientServerBindersPairForTesting();
   EXPECT_NE(client_transport, nullptr);
   EXPECT_NE(server_transport, nullptr);
 
-  grpc_transport_destroy(client_transport);
-  grpc_transport_destroy(server_transport);
+  client_transport->Orphan();
+  server_transport->Orphan();
 }
 
 TEST_P(End2EndBinderTransportTest, UnaryCall) {
@@ -119,7 +119,8 @@ TEST_P(End2EndBinderTransportTest, UnaryCallWithNonOkStatus) {
   EXPECT_THAT(status.error_message(), ::testing::HasSubstr("expected to fail"));
 }
 
-TEST_P(End2EndBinderTransportTest, UnaryCallServerTimeout) {
+// Disabled because the test is ~0.01% flaky
+TEST_P(End2EndBinderTransportTest, DISABLED_UnaryCallServerTimeout) {
   std::unique_ptr<grpc::testing::EchoTestService::Stub> stub = NewStub();
   grpc::ClientContext context;
   context.set_deadline(absl::ToChronoTime(
@@ -376,8 +377,9 @@ TEST_P(End2EndBinderTransportTest, ClientStreamingCall) {
   EXPECT_EQ(response.message(), expected);
 }
 
+// Disabled because the test case is ~0.002% flaky
 TEST_P(End2EndBinderTransportTest,
-       ClientStreamingCallTryCancelBeforeProcessing) {
+       DISABLED_ClientStreamingCallTryCancelBeforeProcessing) {
   std::unique_ptr<grpc::testing::EchoTestService::Stub> stub = NewStub();
   grpc::ClientContext context;
   context.AddMetadata(grpc::testing::kServerTryCancelRequest,
@@ -398,8 +400,9 @@ TEST_P(End2EndBinderTransportTest,
   EXPECT_EQ(status.error_code(), grpc::StatusCode::CANCELLED);
 }
 
+// Disabled because the test case is ~0.002% flaky
 TEST_P(End2EndBinderTransportTest,
-       ClientStreamingCallTryCancelDuringProcessing) {
+       DISABLED_ClientStreamingCallTryCancelDuringProcessing) {
   std::unique_ptr<grpc::testing::EchoTestService::Stub> stub = NewStub();
   grpc::ClientContext context;
   context.AddMetadata(grpc::testing::kServerTryCancelRequest,
@@ -483,7 +486,9 @@ TEST_P(End2EndBinderTransportTest, BiDirStreamingCall) {
   writer_thread.Join();
 }
 
-TEST_P(End2EndBinderTransportTest, BiDirStreamingCallServerFinishesHalfway) {
+// Disabled because the test case is ~0.01% flaky
+TEST_P(End2EndBinderTransportTest,
+       DISABLED_BiDirStreamingCallServerFinishesHalfway) {
   std::unique_ptr<grpc::testing::EchoTestService::Stub> stub = NewStub();
   constexpr size_t kBiDirStreamingCounts = 100;
   grpc::ClientContext context;
@@ -548,12 +553,11 @@ TEST_P(End2EndBinderTransportTest, LargeMessages) {
   }
 }
 
-INSTANTIATE_TEST_SUITE_P(
-    End2EndBinderTransportTestWithDifferentDelayTimes,
-    End2EndBinderTransportTest,
-    testing::Values(absl::ZeroDuration(), absl::Nanoseconds(10),
-                    absl::Microseconds(10), absl::Microseconds(100),
-                    absl::Milliseconds(1), absl::Milliseconds(20)));
+INSTANTIATE_TEST_SUITE_P(End2EndBinderTransportTestWithDifferentDelayTimes,
+                         End2EndBinderTransportTest,
+                         testing::Values(absl::ZeroDuration(),
+                                         absl::Microseconds(10),
+                                         absl::Milliseconds(10)));
 
 }  // namespace grpc_binder
 

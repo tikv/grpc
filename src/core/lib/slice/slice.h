@@ -15,20 +15,20 @@
 #ifndef GRPC_SRC_CORE_LIB_SLICE_SLICE_H
 #define GRPC_SRC_CORE_LIB_SLICE_SLICE_H
 
-#include <grpc/support/port_platform.h>
-
 #include <string.h>
 
 #include <cstdint>
 #include <string>
 #include <utility>
 
+#include "absl/log/check.h"
 #include "absl/strings/string_view.h"
 
 #include <grpc/event_engine/internal/slice_cast.h>
 #include <grpc/event_engine/slice.h>
 #include <grpc/slice.h>
 #include <grpc/support/log.h>
+#include <grpc/support/port_platform.h>
 
 #include "src/core/lib/gpr/string.h"
 #include "src/core/lib/gprpp/debug_location.h"
@@ -244,7 +244,7 @@ class StaticSlice : public slice_detail::BaseSlice,
   StaticSlice() = default;
   explicit StaticSlice(const grpc_slice& slice)
       : slice_detail::BaseSlice(slice) {
-    GPR_DEBUG_ASSERT(slice.refcount == grpc_slice_refcount::NoopRefcount());
+    DCHECK(slice.refcount == grpc_slice_refcount::NoopRefcount());
   }
 
   StaticSlice(const StaticSlice& other)
@@ -268,7 +268,7 @@ class GPR_MSVC_EMPTY_BASE_CLASS_WORKAROUND MutableSlice
   MutableSlice() = default;
   explicit MutableSlice(const grpc_slice& slice)
       : slice_detail::BaseSlice(slice) {
-    GPR_DEBUG_ASSERT(slice.refcount == nullptr || slice.refcount->IsUnique());
+    DCHECK(slice.refcount == nullptr || slice.refcount->IsUnique());
   }
   ~MutableSlice() { CSliceUnref(c_slice()); }
 
@@ -291,6 +291,12 @@ class GPR_MSVC_EMPTY_BASE_CLASS_WORKAROUND MutableSlice
     return MutableSlice(grpc_slice_sub_no_ref(TakeCSlice(), pos, pos + n));
   }
 
+  // Split this slice in two, returning the first n bytes and leaving the
+  // remainder.
+  MutableSlice TakeFirst(size_t n) {
+    return MutableSlice(NoCheck{}, grpc_slice_split_head(c_slice_ptr(), n));
+  }
+
   // Iterator access to the underlying bytes
   uint8_t* begin() { return mutable_data(); }
   uint8_t* end() { return mutable_data() + size(); }
@@ -300,6 +306,11 @@ class GPR_MSVC_EMPTY_BASE_CLASS_WORKAROUND MutableSlice
   uint8_t& operator[](size_t i) { return mutable_data()[i]; }
 
   using slice_detail::BaseSlice::c_slice_ptr;
+
+ private:
+  struct NoCheck {};
+  MutableSlice(NoCheck, const grpc_slice& slice)
+      : slice_detail::BaseSlice(slice) {}
 };
 
 class GPR_MSVC_EMPTY_BASE_CLASS_WORKAROUND Slice
@@ -340,6 +351,22 @@ class GPR_MSVC_EMPTY_BASE_CLASS_WORKAROUND Slice
       return Slice(grpc_slice_copy(c_slice()));
     }
     return Slice(TakeCSlice());
+  }
+
+  // As per TakeOwned, but if the slice is refcounted and there are other refs
+  // then it will copy instead of ref-counting, to ensure the returned slice is
+  // not shared.
+  Slice TakeUniquelyOwned() {
+    if (c_slice().refcount == nullptr) {
+      return Slice(c_slice());
+    }
+    if (c_slice().refcount == grpc_slice_refcount::NoopRefcount()) {
+      return Slice(grpc_slice_copy(c_slice()));
+    }
+    if (c_slice().refcount->IsUnique()) {
+      return Slice(TakeCSlice());
+    }
+    return Slice(grpc_slice_copy(c_slice()));
   }
 
   // AsOwned returns an owned slice but does not mutate the current slice,

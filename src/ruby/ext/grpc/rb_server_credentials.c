@@ -23,6 +23,7 @@
 #include "rb_grpc.h"
 #include "rb_grpc_imports.generated.h"
 
+#include <grpc/credentials.h>
 #include <grpc/grpc.h>
 #include <grpc/grpc_security.h>
 #include <grpc/support/log.h>
@@ -62,7 +63,6 @@ static void grpc_rb_server_credentials_free_internal(void* p) {
 /* Destroys the server credentials instances. */
 static void grpc_rb_server_credentials_free(void* p) {
   grpc_rb_server_credentials_free_internal(p);
-  grpc_ruby_shutdown();
 }
 
 /* Protects the mark object from GC */

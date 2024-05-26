@@ -24,21 +24,22 @@ import grpc
 from tests.unit import test_common
 from tests.unit.framework.common import test_constants
 
-_ABORT = '/test/abort'
-_ABORT_WITH_STATUS = '/test/AbortWithStatus'
-_INVALID_CODE = '/test/InvalidCode'
+_SERVICE_NAME = "test"
+_ABORT = "abort"
+_ABORT_WITH_STATUS = "AbortWithStatus"
+_INVALID_CODE = "InvalidCode"
 
-_REQUEST = b'\x00\x00\x00'
-_RESPONSE = b'\x00\x00\x00'
+_REQUEST = b"\x00\x00\x00"
+_RESPONSE = b"\x00\x00\x00"
 
-_ABORT_DETAILS = 'Abandon ship!'
-_ABORT_METADATA = (('a-trailing-metadata', '42'),)
+_ABORT_DETAILS = "Abandon ship!"
+_ABORT_METADATA = (("a-trailing-metadata", "42"),)
 
 
 class _Status(
-        collections.namedtuple('_Status',
-                               ('code', 'details', 'trailing_metadata')),
-        grpc.Status):
+    collections.namedtuple("_Status", ("code", "details", "trailing_metadata")),
+    grpc.Status,
+):
     pass
 
 
@@ -55,7 +56,7 @@ def abort_unary_unary(request, servicer_context):
         grpc.StatusCode.INTERNAL,
         _ABORT_DETAILS,
     )
-    raise Exception('This line should not be executed!')
+    raise Exception("This line should not be executed!")
 
 
 def abort_with_status_unary_unary(request, servicer_context):
@@ -64,8 +65,9 @@ def abort_with_status_unary_unary(request, servicer_context):
             code=grpc.StatusCode.INTERNAL,
             details=_ABORT_DETAILS,
             trailing_metadata=_ABORT_METADATA,
-        ))
-    raise Exception('This line should not be executed!')
+        )
+    )
+    raise Exception("This line should not be executed!")
 
 
 def invalid_code_unary_unary(request, servicer_context):
@@ -75,30 +77,27 @@ def invalid_code_unary_unary(request, servicer_context):
     )
 
 
-class _GenericHandler(grpc.GenericRpcHandler):
-
-    def service(self, handler_call_details):
-        if handler_call_details.method == _ABORT:
-            return grpc.unary_unary_rpc_method_handler(abort_unary_unary)
-        elif handler_call_details.method == _ABORT_WITH_STATUS:
-            return grpc.unary_unary_rpc_method_handler(
-                abort_with_status_unary_unary)
-        elif handler_call_details.method == _INVALID_CODE:
-            return grpc.stream_stream_rpc_method_handler(
-                invalid_code_unary_unary)
-        else:
-            return None
+RPC_METHOD_HANDLERS = {
+    _ABORT: grpc.unary_unary_rpc_method_handler(abort_unary_unary),
+    _ABORT_WITH_STATUS: grpc.unary_unary_rpc_method_handler(
+        abort_with_status_unary_unary
+    ),
+    _INVALID_CODE: grpc.stream_stream_rpc_method_handler(
+        invalid_code_unary_unary
+    ),
+}
 
 
 class AbortTest(unittest.TestCase):
-
     def setUp(self):
         self._server = test_common.test_server()
-        port = self._server.add_insecure_port('[::]:0')
-        self._server.add_generic_rpc_handlers((_GenericHandler(),))
+        port = self._server.add_insecure_port("[::]:0")
+        self._server.add_registered_method_handlers(
+            _SERVICE_NAME, RPC_METHOD_HANDLERS
+        )
         self._server.start()
 
-        self._channel = grpc.insecure_channel('localhost:%d' % port)
+        self._channel = grpc.insecure_channel("localhost:%d" % port)
 
     def tearDown(self):
         self._channel.close()
@@ -106,7 +105,10 @@ class AbortTest(unittest.TestCase):
 
     def test_abort(self):
         with self.assertRaises(grpc.RpcError) as exception_context:
-            self._channel.unary_unary(_ABORT)(_REQUEST)
+            self._channel.unary_unary(
+                grpc._common.fully_qualified_method(_SERVICE_NAME, _ABORT),
+                _registered_method=True,
+            )(_REQUEST)
         rpc_error = exception_context.exception
 
         self.assertEqual(rpc_error.code(), grpc.StatusCode.INTERNAL)
@@ -123,7 +125,10 @@ class AbortTest(unittest.TestCase):
 
         # Servicer will abort() after creating a local ref to do_not_leak_me.
         with self.assertRaises(grpc.RpcError):
-            self._channel.unary_unary(_ABORT)(_REQUEST)
+            self._channel.unary_unary(
+                grpc._common.fully_qualified_method(_SERVICE_NAME, _ABORT),
+                _registered_method=True,
+            )(_REQUEST)
 
         # Server may still have a stack frame reference to the exception even
         # after client sees error, so ensure server has shutdown.
@@ -133,7 +138,12 @@ class AbortTest(unittest.TestCase):
 
     def test_abort_with_status(self):
         with self.assertRaises(grpc.RpcError) as exception_context:
-            self._channel.unary_unary(_ABORT_WITH_STATUS)(_REQUEST)
+            self._channel.unary_unary(
+                grpc._common.fully_qualified_method(
+                    _SERVICE_NAME, _ABORT_WITH_STATUS
+                ),
+                _registered_method=True,
+            )(_REQUEST)
         rpc_error = exception_context.exception
 
         self.assertEqual(rpc_error.code(), grpc.StatusCode.INTERNAL)
@@ -142,13 +152,18 @@ class AbortTest(unittest.TestCase):
 
     def test_invalid_code(self):
         with self.assertRaises(grpc.RpcError) as exception_context:
-            self._channel.unary_unary(_INVALID_CODE)(_REQUEST)
+            self._channel.unary_unary(
+                grpc._common.fully_qualified_method(
+                    _SERVICE_NAME, _INVALID_CODE
+                ),
+                _registered_method=True,
+            )(_REQUEST)
         rpc_error = exception_context.exception
 
         self.assertEqual(rpc_error.code(), grpc.StatusCode.UNKNOWN)
         self.assertEqual(rpc_error.details(), _ABORT_DETAILS)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     logging.basicConfig()
     unittest.main(verbosity=2)

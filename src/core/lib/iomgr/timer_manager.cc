@@ -16,14 +16,15 @@
 //
 //
 
-#include <grpc/support/port_platform.h>
-
 #include "src/core/lib/iomgr/timer_manager.h"
 
 #include <inttypes.h>
 
+#include "absl/log/check.h"
+
 #include <grpc/support/alloc.h>
 #include <grpc/support/log.h>
+#include <grpc/support/port_platform.h>
 
 #include "src/core/lib/debug/trace.h"
 #include "src/core/lib/gprpp/crash.h"
@@ -41,6 +42,8 @@ extern grpc_core::TraceFlag grpc_timer_check_trace;
 static gpr_mu g_mu;
 // are we multi-threaded
 static bool g_threaded;
+// should we start multi-threaded
+static bool g_start_threaded = true;
 // cv to wait until a thread is needed
 static gpr_cv g_cv_wait;
 // cv for notification when threading ends
@@ -81,7 +84,7 @@ static void gc_completed_threads(void) {
 }
 
 static void start_timer_thread_and_unlock(void) {
-  GPR_ASSERT(g_threaded);
+  CHECK(g_threaded);
   ++g_waiter_count;
   ++g_thread_count;
   gpr_mu_unlock(&g_mu);
@@ -309,7 +312,7 @@ void grpc_timer_manager_init(void) {
   g_has_timed_waiter = false;
   g_timed_waiter_deadline = grpc_core::Timestamp::InfFuture();
 
-  start_threads();
+  if (g_start_threaded) start_threads();
 }
 
 static void stop_threads(void) {
@@ -349,6 +352,10 @@ void grpc_timer_manager_set_threading(bool enabled) {
   } else {
     stop_threads();
   }
+}
+
+void grpc_timer_manager_set_start_threaded(bool enabled) {
+  g_start_threaded = enabled;
 }
 
 void grpc_kick_poller(void) {

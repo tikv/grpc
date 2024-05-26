@@ -28,21 +28,8 @@ grpc_cc_test(
     deps = [
         "//:grpc_client_channel",
         "//src/core:channel_args",
-        "//test/core/util:grpc_test_util",
-    ],
-)
-
-grpc_cc_test(
-    name = "http_proxy_mapper_test",
-    srcs = ["http_proxy_mapper_test.cc"],
-    external_deps = ["gtest"],
-    language = "C++",
-    uses_polling = False,
-    deps = [
-        "//:gpr",
-        "//:grpc",
-        "//src/core:channel_args",
-        "//test/core/util:grpc_test_util",
+        "//src/core:subchannel_pool_interface",
+        "//test/core/test_util:grpc_test_util",
     ],
 )
 
@@ -58,7 +45,7 @@ grpc_cc_test(
     deps = [
         "//:gpr",
         "//:grpc",
-        "//test/core/util:grpc_test_util",
+        "//test/core/test_util:grpc_test_util",
     ],
 )
 
@@ -75,7 +62,7 @@ grpc_cc_test(
         "//:gpr",
         "//:grpc",
         "//src/core:channel_args",
-        "//test/core/util:grpc_test_util",
+        "//test/core/test_util:grpc_test_util",
     ],
 )
 
@@ -92,6 +79,6 @@ grpc_cc_test(
         "//:gpr",
         "//:grpc",
         "//src/core:channel_args",
-        "//test/core/util:grpc_test_util",
+        "//test/core/test_util:grpc_test_util",
     ],
 )

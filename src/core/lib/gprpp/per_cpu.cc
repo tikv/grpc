@@ -12,15 +12,16 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include <grpc/support/port_platform.h>
-
 #include "src/core/lib/gprpp/per_cpu.h"
 
 #include <grpc/support/cpu.h>
+#include <grpc/support/port_platform.h>
 
 #include "src/core/lib/gpr/useful.h"
 
 namespace grpc_core {
+
+thread_local PerCpuShardingHelper::State PerCpuShardingHelper::state_;
 
 size_t PerCpuOptions::Shards() {
   return ShardsForCpuCount(gpr_cpu_num_cores());

@@ -1,29 +1,9 @@
-/*
- * Copyright (c) 2009-2021, Google LLC
- * All rights reserved.
- *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *     * Redistributions of source code must retain the above copyright
- *       notice, this list of conditions and the following disclaimer.
- *     * Redistributions in binary form must reproduce the above copyright
- *       notice, this list of conditions and the following disclaimer in the
- *       documentation and/or other materials provided with the distribution.
- *     * Neither the name of Google LLC nor the
- *       names of its contributors may be used to endorse or promote products
- *       derived from this software without specific prior written permission.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
- * ARE DISCLAIMED. IN NO EVENT SHALL Google LLC BE LIABLE FOR ANY DIRECT,
- * INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
- * (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
- * LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND
- * ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
- * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
- * SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- */
+// Protocol Buffers - Google's data interchange format
+// Copyright 2023 Google LLC.  All rights reserved.
+//
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file or at
+// https://developers.google.com/open-source/licenses/bsd
 
 #include "upb/util/compare.h"
 
@@ -34,9 +14,12 @@
 #include <variant>
 #include <vector>
 
-#include "gtest/gtest.h"
-#include "upb/wire/swap_internal.h"
+#include <gtest/gtest.h>
+#include "upb/base/internal/endian.h"
 #include "upb/wire/types.h"
+
+// Must be last.
+#include "upb/port/def.inc"
 
 struct UnknownField;
 
@@ -63,7 +46,7 @@ struct Fixed32 {
   uint32_t val;
 };
 struct Group {
-  Group(std::initializer_list<UnknownField> _val) : val(_val) {}
+  Group(std::initializer_list<UnknownField> _val);
   UnknownFields val;
 };
 
@@ -71,6 +54,8 @@ struct UnknownField {
   uint32_t field_number;
   std::variant<Varint, LongVarint, Delimited, Fixed64, Fixed32, Group> value;
 };
+
+Group::Group(std::initializer_list<UnknownField> _val) : val(_val) {}
 
 void EncodeVarint(uint64_t val, std::string* str) {
   do {
@@ -99,11 +84,11 @@ std::string ToBinaryPayload(const UnknownFields& fields) {
       ret.append(val->val);
     } else if (const auto* val = std::get_if<Fixed64>(&field.value)) {
       EncodeVarint(field.field_number << 3 | kUpb_WireType_64Bit, &ret);
-      uint64_t swapped = _upb_BigEndian_Swap64(val->val);
+      uint64_t swapped = upb_BigEndian64(val->val);
       ret.append(reinterpret_cast<const char*>(&swapped), sizeof(swapped));
     } else if (const auto* val = std::get_if<Fixed32>(&field.value)) {
       EncodeVarint(field.field_number << 3 | kUpb_WireType_32Bit, &ret);
-      uint32_t swapped = _upb_BigEndian_Swap32(val->val);
+      uint32_t swapped = upb_BigEndian32(val->val);
       ret.append(reinterpret_cast<const char*>(&swapped), sizeof(swapped));
     } else if (const auto* val = std::get_if<Group>(&field.value)) {
       EncodeVarint(field.field_number << 3 | kUpb_WireType_StartGroup, &ret);

@@ -15,15 +15,16 @@
 #ifndef GRPC_SRC_CORE_LIB_PROMISE_ARENA_PROMISE_H
 #define GRPC_SRC_CORE_LIB_PROMISE_ARENA_PROMISE_H
 
-#include <grpc/support/port_platform.h>
-
 #include <stdlib.h>
 
+#include <cstddef>
 #include <memory>
 #include <type_traits>
 #include <utility>
 
 #include "absl/meta/type_traits.h"
+
+#include <grpc/support/port_platform.h>
 
 #include "src/core/lib/gprpp/construct_destruct.h"
 #include "src/core/lib/promise/context.h"
@@ -34,7 +35,10 @@ namespace grpc_core {
 
 namespace arena_promise_detail {
 
-using ArgType = std::aligned_storage_t<sizeof(void*)>;
+struct ArgType {
+  alignas(std::max_align_t) char buffer[sizeof(void*)];
+};
+
 template <typename T>
 T*& ArgAsPtr(ArgType* arg) {
   static_assert(sizeof(ArgType) >= sizeof(T**),

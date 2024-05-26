@@ -11,11 +11,12 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-#include <grpc/support/port_platform.h>
+#include <memory>
 
 #include "gtest/gtest.h"
 
 #include <grpc/event_engine/event_engine.h>
+#include <grpc/support/port_platform.h>
 
 using ::grpc_event_engine::experimental::EventEngine;
 
@@ -23,8 +24,7 @@ template <typename T>
 class TaskHandleTest : public testing::Test {};
 
 using HandleTypes =
-    ::testing::Types<EventEngine::TaskHandle, EventEngine::ConnectionHandle,
-                     EventEngine::DNSResolver::LookupTaskHandle>;
+    ::testing::Types<EventEngine::TaskHandle, EventEngine::ConnectionHandle>;
 TYPED_TEST_SUITE(TaskHandleTest, HandleTypes);
 
 TYPED_TEST(TaskHandleTest, Identity) {

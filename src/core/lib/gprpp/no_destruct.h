@@ -15,10 +15,10 @@
 #ifndef GRPC_SRC_CORE_LIB_GPRPP_NO_DESTRUCT_H
 #define GRPC_SRC_CORE_LIB_GPRPP_NO_DESTRUCT_H
 
-#include <grpc/support/port_platform.h>
-
 #include <type_traits>
 #include <utility>
+
+#include <grpc/support/port_platform.h>
 
 #include "src/core/lib/gprpp/construct_destruct.h"
 
@@ -68,7 +68,7 @@ class NoDestruct {
   const T* get() const { return reinterpret_cast<const T*>(&space_); }
 
  private:
-  typename std::aligned_storage<sizeof(T), alignof(T)>::type space_;
+  alignas(T) char space_[sizeof(T)];
 };
 
 // Helper for when a program desires a single *process wide* instance of a

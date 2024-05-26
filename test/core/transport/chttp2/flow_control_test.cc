@@ -17,6 +17,7 @@
 #include <memory>
 #include <tuple>
 
+#include "absl/log/check.h"
 #include "gtest/gtest.h"
 
 #include <grpc/support/time.h>
@@ -40,7 +41,7 @@ constexpr uint64_t kMaxAdvanceTimeMillis = 24ull * 365 * 3600 * 1000;
 
 gpr_timespec g_now;
 gpr_timespec now_impl(gpr_clock_type clock_type) {
-  GPR_ASSERT(clock_type != GPR_TIMESPAN);
+  CHECK(clock_type != GPR_TIMESPAN);
   gpr_timespec ts = g_now;
   ts.clock_type = clock_type;
   return ts;
@@ -83,7 +84,7 @@ class TransportTargetWindowEstimatesMocker
 class FlowControlTest : public ::testing::Test {
  protected:
   MemoryOwner memory_owner_ = MemoryOwner(
-      ResourceQuota::Default()->memory_quota()->CreateMemoryOwner("test"));
+      ResourceQuota::Default()->memory_quota()->CreateMemoryOwner());
 };
 
 TEST_F(FlowControlTest, NoOp) {

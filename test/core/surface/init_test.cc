@@ -18,11 +18,8 @@
 
 #include "src/core/lib/surface/init.h"
 
-#include <stdint.h>
-
 #include <chrono>
 #include <memory>
-#include <ratio>
 
 #include "absl/time/clock.h"
 #include "absl/time/time.h"
@@ -33,7 +30,7 @@
 
 #include "src/core/lib/event_engine/default_event_engine.h"
 #include "src/core/lib/iomgr/exec_ctx.h"
-#include "test/core/util/test_config.h"
+#include "test/core/test_util/test_config.h"
 
 static void test(int rounds) {
   int i;

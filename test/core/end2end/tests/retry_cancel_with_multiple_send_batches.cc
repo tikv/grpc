@@ -16,7 +16,6 @@
 //
 //
 
-#include <initializer_list>
 #include <memory>
 #include <new>
 
@@ -25,13 +24,13 @@
 #include "absl/types/optional.h"
 #include "gtest/gtest.h"
 
-#include <grpc/grpc.h>
+#include <grpc/impl/channel_arg_names.h>
 #include <grpc/status.h>
 
+#include "src/core/ext/transport/chttp2/transport/internal.h"
 #include "src/core/lib/channel/channel_args.h"
 #include "src/core/lib/channel/channel_fwd.h"
 #include "src/core/lib/channel/channel_stack.h"
-#include "src/core/lib/channel/channel_stack_builder.h"
 #include "src/core/lib/config/core_configuration.h"
 #include "src/core/lib/gprpp/status_helper.h"
 #include "src/core/lib/gprpp/time.h"
@@ -42,7 +41,7 @@
 #include "src/core/lib/transport/transport.h"
 #include "test/core/end2end/end2end_tests.h"
 #include "test/core/end2end/tests/cancel_test_helpers.h"
-#include "test/core/util/test_config.h"
+#include "test/core/test_util/test_config.h"
 
 namespace grpc_core {
 namespace {
@@ -50,7 +49,10 @@ namespace {
 // Tests cancellation with multiple send op batches.
 void TestRetryCancelWithMultipleSendBatches(
     CoreEnd2endTest& test, std::unique_ptr<CancellationMode> mode) {
-  test.InitServer(ChannelArgs());
+  // This is a workaround for the flakiness that if the server ever enters
+  // GracefulShutdown for whatever reason while the client has already been
+  // shutdown, the test would not timeout and fail.
+  test.InitServer(ChannelArgs().Set(GRPC_ARG_PING_TIMEOUT_MS, 5000));
   test.InitClient(
       ChannelArgs()
           .Set(
@@ -161,6 +163,7 @@ class FailSendOpsFilter {
 grpc_channel_filter FailSendOpsFilter::kFilterVtable = {
     CallData::StartTransportStreamOpBatch,
     nullptr,
+    nullptr,
     grpc_channel_next_op,
     sizeof(CallData),
     CallData::Init,
@@ -174,22 +177,13 @@ grpc_channel_filter FailSendOpsFilter::kFilterVtable = {
     "FailSendOpsFilter",
 };
 
-bool MaybeAddFilter(ChannelStackBuilder* builder) {
-  // Skip on proxy (which explicitly disables retries).
-  if (!builder->channel_args()
-           .GetBool(GRPC_ARG_ENABLE_RETRIES)
-           .value_or(true)) {
-    return true;
-  }
-  // Install filter.
-  builder->PrependFilter(&FailSendOpsFilter::kFilterVtable);
-  return true;
-}
-
 void RegisterFilter() {
   CoreConfiguration::RegisterBuilder([](CoreConfiguration::Builder* builder) {
-    builder->channel_init()->RegisterStage(GRPC_CLIENT_SUBCHANNEL, 0,
-                                           MaybeAddFilter);
+    builder->channel_init()
+        ->RegisterFilter(GRPC_CLIENT_SUBCHANNEL,
+                         &FailSendOpsFilter::kFilterVtable)
+        // Skip on proxy (which explicitly disables retries).
+        .IfChannelArg(GRPC_ARG_ENABLE_RETRIES, true);
   });
 }
 

@@ -15,11 +15,11 @@
 #ifndef GRPC_SRC_CORE_LIB_PROMISE_DETAIL_PROMISE_LIKE_H
 #define GRPC_SRC_CORE_LIB_PROMISE_DETAIL_PROMISE_LIKE_H
 
-#include <grpc/support/port_platform.h>
-
 #include <utility>
 
 #include "absl/meta/type_traits.h"
+
+#include <grpc/support/port_platform.h>
 
 #include "src/core/lib/promise/poll.h"
 
@@ -63,8 +63,15 @@ auto WrapInPoll(T&& x) -> decltype(PollWrapper<T>::Wrap(std::forward<T>(x))) {
   return PollWrapper<T>::Wrap(std::forward<T>(x));
 }
 
+template <typename F, typename SfinaeVoid = void>
+class PromiseLike;
+
+template <>
+class PromiseLike<void>;
+
 template <typename F>
-class PromiseLike {
+class PromiseLike<F, absl::enable_if_t<!std::is_void<
+                         typename std::result_of<F()>::type>::value>> {
  private:
   GPR_NO_UNIQUE_ADDRESS F f_;
 

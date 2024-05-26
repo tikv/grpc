@@ -23,7 +23,7 @@ from typing import Any, List, Mapping, Union
 
 def import_python_module(path: str) -> types.ModuleType:
     """Imports the Python file at the given path, returns a module object."""
-    module_name = os.path.basename(path).replace('.py', '')
+    module_name = os.path.basename(path).replace(".py", "")
     spec = importlib.util.spec_from_file_location(module_name, path)
     module = importlib.util.module_from_spec(spec)
     sys.modules[module_name] = module
@@ -34,9 +34,45 @@ def import_python_module(path: str) -> types.ModuleType:
 class Bunch(dict):
     """Allows dot-accessible dictionaries."""
 
-    def __init__(self, d: Mapping):
-        dict.__init__(self, d)
-        self.__dict__.update(d)
+    def __contains__(self, k):
+        try:
+            return dict.__contains__(self, k) or hasattr(self, k)
+        except:
+            return False
+
+    def __getattr__(self, k):
+        try:
+            # Throws exception if not in prototype chain
+            return object.__getattribute__(self, k)
+        except AttributeError:
+            try:
+                return self[k]
+            except KeyError:
+                raise AttributeError(k)
+
+    def __setattr__(self, k, v):
+        try:
+            # Throws exception if not in prototype chain
+            object.__getattribute__(self, k)
+        except AttributeError:
+            try:
+                self[k] = v
+            except:
+                raise AttributeError(k)
+        else:
+            object.__setattr__(self, k, v)
+
+    def __delattr__(self, k):
+        try:
+            # Throws exception if not in prototype chain
+            object.__getattribute__(self, k)
+        except AttributeError:
+            try:
+                del self[k]
+            except KeyError:
+                raise AttributeError(k)
+        else:
+            object.__delattr__(self, k)
 
 
 def to_bunch(var: Any) -> Any:
@@ -59,7 +95,7 @@ def merge_json(dst: Union[Mapping, List], add: Union[Mapping, List]) -> None:
     if isinstance(dst, dict) and isinstance(add, dict):
         for k, v in list(add.items()):
             if k in dst:
-                if k.startswith('#'):
+                if k.startswith("#"):
                     continue
                 merge_json(dst[k], v)
             else:
@@ -68,5 +104,6 @@ def merge_json(dst: Union[Mapping, List], add: Union[Mapping, List]) -> None:
         dst.extend(add)
     else:
         raise TypeError(
-            'Tried to merge incompatible objects %s %s\n\n%r\n\n%r' %
-            (type(dst).__name__, type(add).__name__, dst, add))
+            "Tried to merge incompatible objects %s %s\n\n%r\n\n%r"
+            % (type(dst).__name__, type(add).__name__, dst, add)
+        )

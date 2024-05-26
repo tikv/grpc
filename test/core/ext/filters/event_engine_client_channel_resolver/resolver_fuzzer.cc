@@ -11,10 +11,6 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-#include <grpc/support/port_platform.h>
-
-#include <stdint.h>
-
 #include <algorithm>
 #include <memory>
 #include <string>
@@ -23,9 +19,8 @@
 #include <vector>
 
 #include "absl/base/thread_annotations.h"
-#include "absl/container/flat_hash_set.h"
 #include "absl/functional/any_invocable.h"
-#include "absl/hash/hash.h"
+#include "absl/log/check.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
@@ -33,8 +28,8 @@
 
 #include <grpc/event_engine/event_engine.h>
 #include <grpc/support/log.h>
+#include <grpc/support/port_platform.h>
 
-#include "src/core/ext/filters/client_channel/resolver/dns/event_engine/event_engine_client_channel_resolver.h"
 #include "src/core/lib/channel/channel_args.h"
 #include "src/core/lib/event_engine/default_event_engine.h"
 #include "src/core/lib/event_engine/tcp_socket_utils.h"
@@ -42,16 +37,17 @@
 #include "src/core/lib/gprpp/debug_location.h"
 #include "src/core/lib/gprpp/orphanable.h"
 #include "src/core/lib/gprpp/work_serializer.h"
-#include "src/core/lib/resolver/resolver.h"
-#include "src/core/lib/resolver/resolver_factory.h"
 #include "src/core/lib/uri/uri_parser.h"
+#include "src/core/resolver/dns/event_engine/event_engine_client_channel_resolver.h"
+#include "src/core/resolver/resolver.h"
+#include "src/core/resolver/resolver_factory.h"
 #include "src/libfuzzer/libfuzzer_macro.h"
 #include "test/core/event_engine/fuzzing_event_engine/fuzzing_event_engine.h"
 #include "test/core/event_engine/fuzzing_event_engine/fuzzing_event_engine.pb.h"
 #include "test/core/event_engine/util/aborting_event_engine.h"
 #include "test/core/ext/filters/event_engine_client_channel_resolver/resolver_fuzzer.pb.h"
-#include "test/core/util/fuzz_config_vars.h"
-#include "test/core/util/fuzzing_channel_args.h"
+#include "test/core/test_util/fuzz_config_vars.h"
+#include "test/core/test_util/fuzzing_channel_args.h"
 
 bool squelch = true;
 static void dont_log(gpr_log_func_args* /*args*/) {}
@@ -75,7 +71,8 @@ absl::Status ErrorToAbslStatus(
 }
 
 class FuzzingResolverEventEngine
-    : public grpc_event_engine::experimental::AbortingEventEngine {
+    : public grpc_event_engine::experimental::AbortingEventEngine,
+      public std::enable_shared_from_this<FuzzingResolverEventEngine> {
  public:
   explicit FuzzingResolverEventEngine(
       const event_engine_client_channel_resolver::Msg& msg,
@@ -136,10 +133,22 @@ class FuzzingResolverEventEngine
     }
   }
 
-  std::unique_ptr<DNSResolver> GetDNSResolver(
+  absl::StatusOr<std::unique_ptr<DNSResolver>> GetDNSResolver(
       const DNSResolver::ResolverOptions& /* options */) override {
     return std::make_unique<FuzzingDNSResolver>(this);
   }
+
+  TaskHandle RunAfter(Duration /* when */,
+                      absl::AnyInvocable<void()> /* closure */) override {
+    return TaskHandle::kInvalid;
+  }
+  bool Cancel(TaskHandle /* handle */) override { return true; }
+
+  void Run(absl::AnyInvocable<void()> fn) override {
+    runner_.Run(std::move(fn));
+  }
+
+  void Run(Closure* fn) override { runner_.Run(fn); }
 
   void Tick() { runner_.Tick(); }
 
@@ -149,85 +158,52 @@ class FuzzingResolverEventEngine
     explicit FuzzingDNSResolver(FuzzingResolverEventEngine* engine)
         : engine_(engine) {}
 
-    ~FuzzingDNSResolver() override { GPR_ASSERT(known_handles_.empty()); }
-    LookupTaskHandle LookupHostname(LookupHostnameCallback on_resolve,
-                                    absl::string_view /* name */,
-                                    absl::string_view /* default_port */,
-                                    Duration /* timeout */) override {
-      int handle = NextHandle();
-      CheckAndSetOrphan(ExecutionStep::DURING_LOOKUP_HOSTNAME);
+    void LookupHostname(LookupHostnameCallback on_resolve,
+                        absl::string_view /* name */,
+                        absl::string_view /* default_port */) override {
+      engine_->CheckAndSetOrphan(ExecutionStep::DURING_LOOKUP_HOSTNAME);
       if (!engine_->has_been_orphaned_) {
         engine_->runner_.Run(
-            [this, cb = std::move(on_resolve), handle]() mutable {
-              if (!HandleExists(handle)) return;
-              DeleteHandle(handle);
-              cb(engine_->hostname_responses_);
-              CheckAndSetOrphan(ExecutionStep::AFTER_LOOKUP_HOSTNAME_CALLBACK);
+            [engine = engine_, cb = std::move(on_resolve)]() mutable {
+              engine->CheckAndSetOrphan(
+                  ExecutionStep::AFTER_LOOKUP_HOSTNAME_CALLBACK);
+              cb(engine->hostname_responses_);
             });
       }
-      return {handle, 0};
     }
-    LookupTaskHandle LookupSRV(LookupSRVCallback on_resolve,
-                               absl::string_view /* name */,
-                               Duration /* timeout */) override {
-      int handle = NextHandle();
-      CheckAndSetOrphan(ExecutionStep::DURING_LOOKUP_SRV);
+    void LookupSRV(LookupSRVCallback on_resolve,
+                   absl::string_view /* name */) override {
+      engine_->CheckAndSetOrphan(ExecutionStep::DURING_LOOKUP_SRV);
       if (!engine_->has_been_orphaned_) {
-        engine_->runner_.Run(
-            [this, cb = std::move(on_resolve), handle]() mutable {
-              if (!HandleExists(handle)) return;
-              DeleteHandle(handle);
-              cb(engine_->srv_responses_);
-              CheckAndSetOrphan(ExecutionStep::AFTER_LOOKUP_SRV_CALLBACK);
-            });
+        engine_->runner_.Run([engine = engine_,
+                              cb = std::move(on_resolve)]() mutable {
+          engine->CheckAndSetOrphan(ExecutionStep::AFTER_LOOKUP_SRV_CALLBACK);
+          cb(engine->srv_responses_);
+        });
       }
-      return {handle, 0};
     }
-    LookupTaskHandle LookupTXT(LookupTXTCallback on_resolve,
-                               absl::string_view /* name */,
-                               Duration /* timeout */) override {
-      int handle = NextHandle();
-      CheckAndSetOrphan(ExecutionStep::DURING_LOOKUP_TXT);
+    void LookupTXT(LookupTXTCallback on_resolve,
+                   absl::string_view /* name */) override {
+      engine_->CheckAndSetOrphan(ExecutionStep::DURING_LOOKUP_TXT);
       if (!engine_->has_been_orphaned_) {
-        engine_->runner_.Run(
-            [this, cb = std::move(on_resolve), handle]() mutable {
-              if (!HandleExists(handle)) return;
-              DeleteHandle(handle);
-              cb(engine_->txt_responses_);
-              CheckAndSetOrphan(ExecutionStep::AFTER_LOOKUP_TXT_CALLBACK);
-            });
+        engine_->runner_.Run([engine = engine_,
+                              cb = std::move(on_resolve)]() mutable {
+          engine->CheckAndSetOrphan(ExecutionStep::AFTER_LOOKUP_TXT_CALLBACK);
+          cb(engine->txt_responses_);
+        });
       }
-      return {handle, 0};
-    }
-    bool CancelLookup(LookupTaskHandle handle) override {
-      int bit_handle = handle.keys[0];
-      if (!HandleExists(bit_handle)) return false;
-      DeleteHandle(bit_handle);
-      return true;
     }
 
    private:
-    int NextHandle() {
-      static uint64_t next_handle = 0;
-      known_handles_.insert(++next_handle);
-      return next_handle;
-    }
-
-    bool HandleExists(int handle) { return known_handles_.contains(handle); }
-
-    void DeleteHandle(int handle) { known_handles_.erase(handle); }
-
-    void CheckAndSetOrphan(ExecutionStep current_execution_step) {
-      if (engine_->should_orphan_at_step_ == current_execution_step) {
-        *engine_->done_resolving_ = true;
-        engine_->has_been_orphaned_ = true;
-      }
-    }
-
     FuzzingResolverEventEngine* engine_;
-    // The set of outstanding LookupTaskHandles.
-    absl::flat_hash_set<uint64_t> known_handles_;
   };
+
+  void CheckAndSetOrphan(ExecutionStep current_execution_step) {
+    if (should_orphan_at_step_ == current_execution_step) {
+      *done_resolving_ = true;
+      has_been_orphaned_ = true;
+    }
+  }
 
   // members
   FuzzingEventEngine runner_;
@@ -265,7 +241,7 @@ grpc_core::ResolverArgs ConstructResolverArgs(
     std::shared_ptr<grpc_core::WorkSerializer> work_serializer) {
   grpc_core::ResolverArgs resolver_args;
   auto uri = grpc_core::URI::Parse("dns:localhost");
-  GPR_ASSERT(uri.ok());
+  CHECK(uri.ok());
   resolver_args.uri = *uri;
   resolver_args.args = channel_args;
   resolver_args.pollset_set = nullptr;
@@ -290,7 +266,7 @@ DEFINE_PROTO_FUZZER(const event_engine_client_channel_resolver::Msg& msg) {
       grpc_event_engine::experimental::GetDefaultEventEngine());
   {
     // scoped to ensure the resolver is orphaned when done resolving.
-    auto work_serializer = std::make_shared<grpc_core::WorkSerializer>();
+    auto work_serializer = std::make_shared<grpc_core::WorkSerializer>(engine);
     EventEngineClientChannelDNSResolverFactory resolver_factory;
     auto resolver_args = ConstructResolverArgs(
         grpc_core::testing::CreateChannelArgsFromFuzzingConfiguration(

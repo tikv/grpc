@@ -15,23 +15,21 @@
 #ifndef GRPC_SRC_CORE_LIB_PROMISE_PIPE_H
 #define GRPC_SRC_CORE_LIB_PROMISE_PIPE_H
 
-#include <grpc/support/port_platform.h>
-
 #include <stdint.h>
 #include <stdlib.h>
 
 #include <memory>
 #include <string>
-#include <type_traits>
 #include <utility>
 
+#include "absl/log/check.h"
 #include "absl/strings/str_cat.h"
 #include "absl/types/optional.h"
 #include "absl/types/variant.h"
 
 #include <grpc/support/log.h>
+#include <grpc/support/port_platform.h>
 
-#include "src/core/lib/debug/trace.h"
 #include "src/core/lib/gprpp/debug_location.h"
 #include "src/core/lib/gprpp/ref_counted_ptr.h"
 #include "src/core/lib/promise/activity.h"
@@ -66,7 +64,7 @@ class NextResult final {
   NextResult() : center_(nullptr) {}
   explicit NextResult(RefCountedPtr<pipe_detail::Center<T>> center)
       : center_(std::move(center)) {
-    GPR_ASSERT(center_ != nullptr);
+    CHECK(center_ != nullptr);
   }
   explicit NextResult(bool cancelled)
       : center_(nullptr), cancelled_(cancelled) {}
@@ -82,17 +80,17 @@ class NextResult final {
   bool has_value() const;
   // Only valid if has_value()
   const T& value() const {
-    GPR_ASSERT(has_value());
+    CHECK(has_value());
     return **this;
   }
   T& value() {
-    GPR_ASSERT(has_value());
+    CHECK(has_value());
     return **this;
   }
   const T& operator*() const;
   T& operator*();
   // Only valid if !has_value()
-  bool cancelled() { return cancelled_; }
+  bool cancelled() const { return cancelled_; }
 
  private:
   RefCountedPtr<pipe_detail::Center<T>> center_;
@@ -124,7 +122,7 @@ class Center : public InterceptorList<T> {
       gpr_log(GPR_DEBUG, "%s", DebugOpString("IncrementRefCount").c_str());
     }
     refs_++;
-    GPR_DEBUG_ASSERT(refs_ != 0);
+    DCHECK_NE(refs_, 0);
   }
 
   RefCountedPtr<Center> Ref() {
@@ -138,7 +136,7 @@ class Center : public InterceptorList<T> {
     if (grpc_trace_promise_primitives.enabled()) {
       gpr_log(GPR_DEBUG, "%s", DebugOpString("Unref").c_str());
     }
-    GPR_DEBUG_ASSERT(refs_ > 0);
+    DCHECK_GT(refs_, 0);
     refs_--;
     if (0 == refs_) {
       this->~Center();
@@ -153,7 +151,7 @@ class Center : public InterceptorList<T> {
     if (grpc_trace_promise_primitives.enabled()) {
       gpr_log(GPR_INFO, "%s", DebugOpString("Push").c_str());
     }
-    GPR_DEBUG_ASSERT(refs_ != 0);
+    DCHECK_NE(refs_, 0);
     switch (value_state_) {
       case ValueState::kClosed:
       case ValueState::kReadyClosed:
@@ -177,7 +175,7 @@ class Center : public InterceptorList<T> {
     if (grpc_trace_promise_primitives.enabled()) {
       gpr_log(GPR_INFO, "%s", DebugOpString("PollAck").c_str());
     }
-    GPR_DEBUG_ASSERT(refs_ != 0);
+    DCHECK_NE(refs_, 0);
     switch (value_state_) {
       case ValueState::kClosed:
         return true;
@@ -205,7 +203,7 @@ class Center : public InterceptorList<T> {
     if (grpc_trace_promise_primitives.enabled()) {
       gpr_log(GPR_INFO, "%s", DebugOpString("Next").c_str());
     }
-    GPR_DEBUG_ASSERT(refs_ != 0);
+    DCHECK_NE(refs_, 0);
     switch (value_state_) {
       case ValueState::kEmpty:
       case ValueState::kAcked:
@@ -231,7 +229,7 @@ class Center : public InterceptorList<T> {
     if (grpc_trace_promise_primitives.enabled()) {
       gpr_log(GPR_INFO, "%s", DebugOpString("PollClosedForSender").c_str());
     }
-    GPR_DEBUG_ASSERT(refs_ != 0);
+    DCHECK_NE(refs_, 0);
     switch (value_state_) {
       case ValueState::kEmpty:
       case ValueState::kAcked:
@@ -254,7 +252,7 @@ class Center : public InterceptorList<T> {
     if (grpc_trace_promise_primitives.enabled()) {
       gpr_log(GPR_INFO, "%s", DebugOpString("PollClosedForReceiver").c_str());
     }
-    GPR_DEBUG_ASSERT(refs_ != 0);
+    DCHECK_NE(refs_, 0);
     switch (value_state_) {
       case ValueState::kEmpty:
       case ValueState::kAcked:
@@ -275,7 +273,7 @@ class Center : public InterceptorList<T> {
     if (grpc_trace_promise_primitives.enabled()) {
       gpr_log(GPR_INFO, "%s", DebugOpString("PollEmpty").c_str());
     }
-    GPR_DEBUG_ASSERT(refs_ != 0);
+    DCHECK_NE(refs_, 0);
     switch (value_state_) {
       case ValueState::kReady:
       case ValueState::kReadyClosed:
@@ -376,7 +374,7 @@ class Center : public InterceptorList<T> {
   const T& value() const { return value_; }
 
   std::string DebugTag() {
-    if (auto* activity = Activity::current()) {
+    if (auto* activity = GetContext<Activity>()) {
       return absl::StrCat(activity->DebugTag(), " PIPE[0x", absl::Hex(this),
                           "]: ");
     } else {
@@ -541,7 +539,9 @@ class Next {
   Next(Next&& other) noexcept = default;
   Next& operator=(Next&& other) noexcept = default;
 
-  Poll<absl::optional<T>> operator()() { return center_->Next(); }
+  Poll<absl::optional<T>> operator()() {
+    return center_ == nullptr ? absl::nullopt : center_->Next();
+  }
 
  private:
   friend class PipeReceiver<T>;
@@ -572,29 +572,27 @@ class PipeReceiver {
   // Blocks the promise until the receiver is either closed or a message is
   // available.
   auto Next() {
-    return Seq(
-        pipe_detail::Next<T>(center_->Ref()),
-        [center = center_->Ref()](absl::optional<T> value) {
-          bool open = value.has_value();
-          bool cancelled = center->cancelled();
-          return If(
-              open,
-              [center = std::move(center), value = std::move(value)]() mutable {
-                auto run = center->Run(std::move(value));
-                return Map(std::move(run),
-                           [center = std::move(center)](
-                               absl::optional<T> value) mutable {
-                             if (value.has_value()) {
-                               center->value() = std::move(*value);
-                               return NextResult<T>(std::move(center));
-                             } else {
-                               center->MarkCancelled();
-                               return NextResult<T>(true);
-                             }
-                           });
-              },
-              [cancelled]() { return NextResult<T>(cancelled); });
-        });
+    return Seq(pipe_detail::Next<T>(center_), [center = center_](
+                                                  absl::optional<T> value) {
+      bool open = value.has_value();
+      bool cancelled = center == nullptr ? true : center->cancelled();
+      return If(
+          open,
+          [center = std::move(center), value = std::move(value)]() mutable {
+            auto run = center->Run(std::move(value));
+            return Map(std::move(run), [center = std::move(center)](
+                                           absl::optional<T> value) mutable {
+              if (value.has_value()) {
+                center->value() = std::move(*value);
+                return NextResult<T>(std::move(center));
+              } else {
+                center->MarkCancelled();
+                return NextResult<T>(true);
+              }
+            });
+          },
+          [cancelled]() { return NextResult<T>(cancelled); });
+    });
   }
 
   // Return a promise that resolves when the receiver is closed.
@@ -603,7 +601,10 @@ class PipeReceiver {
   // Checks closed from the receivers perspective: that is, if there is a value
   // in the pipe but the pipe is closed, reports open until that value is read.
   auto AwaitClosed() {
-    return [center = center_]() { return center->PollClosedForReceiver(); };
+    return [center = center_]() -> Poll<bool> {
+      if (center == nullptr) return false;
+      return center->PollClosedForReceiver();
+    };
   }
 
   auto AwaitEmpty() {
@@ -637,11 +638,6 @@ class PipeReceiver {
   friend struct Pipe<T>;
   explicit PipeReceiver(pipe_detail::Center<T>* center) : center_(center) {}
   RefCountedPtr<pipe_detail::Center<T>> center_;
-
-  // Make failure to destruct show up in ASAN builds.
-#ifndef NDEBUG
-  std::unique_ptr<int> asan_canary_ = std::make_unique<int>(0);
-#endif
 };
 
 namespace pipe_detail {
@@ -660,7 +656,7 @@ class Push {
     if (center_ == nullptr) {
       if (grpc_trace_promise_primitives.enabled()) {
         gpr_log(GPR_DEBUG, "%s Pipe push has a null center",
-                Activity::current()->DebugTag().c_str());
+                GetContext<Activity>()->DebugTag().c_str());
       }
       return false;
     }
@@ -673,7 +669,7 @@ class Push {
         return Pending{};
       }
     }
-    GPR_DEBUG_ASSERT(absl::holds_alternative<AwaitingAck>(state_));
+    DCHECK(absl::holds_alternative<AwaitingAck>(state_));
     return center_->PollAck();
   }
 

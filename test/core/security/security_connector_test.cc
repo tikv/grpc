@@ -23,6 +23,7 @@
 
 #include <gtest/gtest.h>
 
+#include <grpc/credentials.h>
 #include <grpc/grpc_security.h>
 #include <grpc/support/alloc.h>
 #include <grpc/support/log.h>
@@ -38,7 +39,7 @@
 #include "src/core/lib/slice/slice_string_helpers.h"
 #include "src/core/tsi/ssl_transport_security.h"
 #include "src/core/tsi/transport_security.h"
-#include "test/core/util/test_config.h"
+#include "test/core/test_util/test_config.h"
 
 #ifndef TSI_OPENSSL_ALPN_SUPPORT
 #define TSI_OPENSSL_ALPN_SUPPORT 1
@@ -718,7 +719,7 @@ static void test_default_ssl_roots(void) {
 static void test_peer_alpn_check(void) {
 #if TSI_OPENSSL_ALPN_SUPPORT
   tsi_peer peer;
-  const char* alpn = "grpc";
+  const char* alpn = "h2";
   const char* wrong_alpn = "wrong";
   // peer does not have a TSI_SSL_ALPN_SELECTED_PROTOCOL property.
   ASSERT_EQ(tsi_construct_peer(1, &peer), TSI_OK);

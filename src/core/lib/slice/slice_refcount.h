@@ -15,19 +15,18 @@
 #ifndef GRPC_SRC_CORE_LIB_SLICE_SLICE_REFCOUNT_H
 #define GRPC_SRC_CORE_LIB_SLICE_SLICE_REFCOUNT_H
 
-#include <grpc/support/port_platform.h>
-
 #include <inttypes.h>
 #include <stddef.h>
 
 #include <atomic>
 
 #include <grpc/support/log.h>
+#include <grpc/support/port_platform.h>
 
 #include "src/core/lib/debug/trace.h"
 #include "src/core/lib/gprpp/debug_location.h"
 
-extern grpc_core::DebugOnlyTraceFlag grpc_slice_refcount_trace;
+extern GRPC_DLL grpc_core::DebugOnlyTraceFlag grpc_slice_refcount_trace;
 
 // grpc_slice_refcount : A reference count for grpc_slice.
 struct grpc_slice_refcount {

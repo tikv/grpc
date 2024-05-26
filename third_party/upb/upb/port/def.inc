@@ -1,29 +1,9 @@
-/*
- * Copyright (c) 2009-2021, Google LLC
- * All rights reserved.
- *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *     * Redistributions of source code must retain the above copyright
- *       notice, this list of conditions and the following disclaimer.
- *     * Redistributions in binary form must reproduce the above copyright
- *       notice, this list of conditions and the following disclaimer in the
- *       documentation and/or other materials provided with the distribution.
- *     * Neither the name of Google LLC nor the
- *       names of its contributors may be used to endorse or promote products
- *       derived from this software without specific prior written permission.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
- * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
- * WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL Google LLC BE LIABLE FOR ANY
- * DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
- * (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
- * LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND
- * ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
- * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
- * SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- */
+// Protocol Buffers - Google's data interchange format
+// Copyright 2023 Google LLC.  All rights reserved.
+//
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file or at
+// https://developers.google.com/open-source/licenses/bsd
 
 /*
  * This is where we define internal portability macros used across upb.
@@ -65,9 +45,12 @@
 #include <assert.h>
 #include <setjmp.h>
 #include <stdbool.h>
-#include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
+
+#ifndef UINTPTR_MAX
+Error, UINTPTR_MAX is undefined
+#endif
 
 #if UINTPTR_MAX == 0xffffffff
 #define UPB_SIZE(size32, size64) size32
@@ -114,6 +97,13 @@
 #define UPB_ALIGN_OF(type) _Alignof(type)
 #else
 #define UPB_ALIGN_OF(type) offsetof (struct { char c; type member; }, member)
+#endif
+
+#ifdef _MSC_VER
+// Some versions of our Windows compiler don't support the C11 syntax.
+#define UPB_ALIGN_AS(x) __declspec(align(x))
+#else
+#define UPB_ALIGN_AS(x) _Alignas(x)
 #endif
 
 // Hints to the compiler about likely/unlikely branches.
@@ -202,6 +192,12 @@
 
 #define UPB_PRIVATE(x) x##_dont_copy_me__upb_internal_use_only
 
+#ifdef UPB_ALLOW_PRIVATE_ACCESS__FOR_BITS_ONLY
+#define UPB_ONLYBITS(x) x
+#else
+#define UPB_ONLYBITS(x) UPB_PRIVATE(x)
+#endif
+
 /* Configure whether fasttable is switched on or not. *************************/
 
 #ifdef __has_attribute
@@ -273,10 +269,25 @@
  * expected behavior.
  */
 
-#if defined(__SANITIZE_ADDRESS__)
+/* Due to preprocessor limitations, the conditional logic for setting
+ * UPN_CLANG_ASAN below cannot be consolidated into a portable one-liner.
+ * See https://gcc.gnu.org/onlinedocs/cpp/_005f_005fhas_005fattribute.html.
+ */
+#if defined(__has_feature)
+#if __has_feature(address_sanitizer)
+#define UPB_CLANG_ASAN 1
+#else
+#define UPB_CLANG_ASAN 0
+#endif
+#else
+#define UPB_CLANG_ASAN 0
+#endif
+
+#if defined(__SANITIZE_ADDRESS__) || UPB_CLANG_ASAN
 #define UPB_ASAN 1
+#define UPB_ASAN_GUARD_SIZE 32
 #ifdef __cplusplus
-extern "C" {
+    extern "C" {
 #endif
 void __asan_poison_memory_region(void const volatile *addr, size_t size);
 void __asan_unpoison_memory_region(void const volatile *addr, size_t size);
@@ -289,6 +300,7 @@ void __asan_unpoison_memory_region(void const volatile *addr, size_t size);
   __asan_unpoison_memory_region((addr), (size))
 #else
 #define UPB_ASAN 0
+#define UPB_ASAN_GUARD_SIZE 0
 #define UPB_POISON_MEMORY_REGION(addr, size) \
   ((void)(addr), (void)(size))
 #define UPB_UNPOISON_MEMORY_REGION(addr, size) \
@@ -324,6 +336,11 @@ void __asan_unpoison_memory_region(void const volatile *addr, size_t size);
 
 #if defined(UPB_IS_GOOGLE3) && !defined(UPB_BOOTSTRAP_STAGE0)
 #define UPB_DESC(sym) proto2_##sym
+#define UPB_DESC_MINITABLE(sym) &proto2__##sym##_msg_init
+#elif defined(UPB_BOOTSTRAP_STAGE0)
+#define UPB_DESC(sym) google_protobuf_##sym
+#define UPB_DESC_MINITABLE(sym) google__protobuf__##sym##_msg_init()
 #else
 #define UPB_DESC(sym) google_protobuf_##sym
+#define UPB_DESC_MINITABLE(sym) &google__protobuf__##sym##_msg_init
 #endif

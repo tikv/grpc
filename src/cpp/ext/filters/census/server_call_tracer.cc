@@ -16,20 +16,16 @@
 //
 //
 
-#include <grpc/support/port_platform.h>
-
 #include "src/cpp/ext/filters/census/server_call_tracer.h"
 
 #include <stdint.h>
 #include <string.h>
 
-#include <algorithm>
-#include <initializer_list>
+#include <memory>
 #include <string>
 #include <utility>
 #include <vector>
 
-#include "absl/meta/type_traits.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
 #include "absl/strings/string_view.h"
@@ -44,11 +40,13 @@
 #include "opencensus/trace/span_id.h"
 #include "opencensus/trace/trace_id.h"
 
+#include <grpc/support/port_platform.h>
 #include <grpcpp/opencensus.h>
 
 #include "src/core/lib/channel/call_tracer.h"
 #include "src/core/lib/channel/channel_stack.h"
 #include "src/core/lib/channel/context.h"
+#include "src/core/lib/channel/tcp_tracer.h"
 #include "src/core/lib/iomgr/error.h"
 #include "src/core/lib/promise/context.h"
 #include "src/core/lib/resource_quota/arena.h"
@@ -157,7 +155,29 @@ class OpenCensusServerCallTracer : public grpc_core::ServerCallTracer {
   void RecordEnd(const grpc_call_final_info* final_info) override;
 
   void RecordAnnotation(absl::string_view annotation) override {
+    if (!context_.Span().IsRecording()) {
+      return;
+    }
     context_.AddSpanAnnotation(annotation, {});
+  }
+
+  void RecordAnnotation(const Annotation& annotation) override {
+    if (!context_.Span().IsRecording()) {
+      return;
+    }
+
+    switch (annotation.type()) {
+      // Annotations are expensive to create. We should only create it if the
+      // call is being sampled by default.
+      default:
+        if (IsSampled()) {
+          context_.AddSpanAnnotation(annotation.ToString(), {});
+        }
+        break;
+    }
+  }
+  std::shared_ptr<grpc_core::TcpTracerInterface> StartNewTcpTrace() override {
+    return nullptr;
   }
 
  private:
@@ -244,7 +264,7 @@ void OpenCensusServerCallTracer::RecordEnd(
 
 grpc_core::ServerCallTracer*
 OpenCensusServerCallTracerFactory::CreateNewServerCallTracer(
-    grpc_core::Arena* arena) {
+    grpc_core::Arena* arena, const grpc_core::ChannelArgs& /*args*/) {
   return arena->ManagedNew<OpenCensusServerCallTracer>();
 }
 

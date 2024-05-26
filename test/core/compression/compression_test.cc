@@ -19,6 +19,8 @@
 #include <stdint.h>
 #include <stdlib.h>
 
+#include <memory>
+
 #include "gtest/gtest.h"
 
 #include <grpc/compression.h>
@@ -26,7 +28,7 @@
 #include <grpc/support/log.h>
 
 #include "src/core/lib/gpr/useful.h"
-#include "test/core/util/test_config.h"
+#include "test/core/test_util/test_config.h"
 
 TEST(CompressionTest, CompressionAlgorithmParse) {
   size_t i;

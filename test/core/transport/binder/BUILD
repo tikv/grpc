@@ -44,12 +44,13 @@ grpc_cc_test(
         "gtest",
     ],
     language = "C++",
+    tags = ["no_test_ios"],
     uses_event_engine = False,
     uses_polling = False,
     deps = [
         ":mock_objects",
         "//:grpc++_binder",
-        "//test/core/util:grpc_test_util",
+        "//test/core/test_util:grpc_test_util",
     ],
 )
 
@@ -61,12 +62,13 @@ grpc_cc_test(
         "gtest",
     ],
     language = "C++",
+    tags = ["no_test_ios"],
     uses_event_engine = False,
     uses_polling = False,
     deps = [
         ":mock_objects",
         "//:grpc++_binder",
-        "//test/core/util:grpc_test_util",
+        "//test/core/test_util:grpc_test_util",
     ],
 )
 
@@ -78,11 +80,12 @@ grpc_cc_test(
         "gtest",
     ],
     language = "C++",
+    tags = ["no_test_ios"],
     uses_event_engine = False,
     uses_polling = False,
     deps = [
         "//:grpc++_binder",
-        "//test/core/util:grpc_test_util",
+        "//test/core/test_util:grpc_test_util",
     ],
 )
 
@@ -98,6 +101,7 @@ grpc_cc_test(
     tags = [
         # To avoid `symbolizer buffer too small` warning of UBSAN
         "noubsan",
+        "no_test_ios",
     ],
     uses_event_engine = False,
     uses_polling = False,
@@ -105,7 +109,7 @@ grpc_cc_test(
         ":mock_objects",
         "//:grpc",
         "//:grpc++_binder",
-        "//test/core/util:grpc_test_util",
+        "//test/core/test_util:grpc_test_util",
     ],
 )
 
@@ -117,12 +121,13 @@ grpc_cc_test(
         "gtest",
     ],
     language = "C++",
+    tags = ["no_test_ios"],
     uses_event_engine = False,
     uses_polling = False,
     deps = [
         ":mock_objects",
         "//:grpc",
         "//:grpc++_binder",
-        "//test/core/util:grpc_test_util",
+        "//test/core/test_util:grpc_test_util",
     ],
 )

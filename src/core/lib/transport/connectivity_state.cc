@@ -16,13 +16,10 @@
 //
 //
 
-#include <grpc/support/port_platform.h>
-
 #include "src/core/lib/transport/connectivity_state.h"
 
-#include <string>
-
 #include <grpc/support/log.h>
+#include <grpc/support/port_platform.h>
 
 #include "src/core/lib/gprpp/debug_location.h"
 #include "src/core/lib/gprpp/ref_counted_ptr.h"
@@ -93,8 +90,9 @@ class AsyncConnectivityStateWatcherInterface::Notifier {
 
 void AsyncConnectivityStateWatcherInterface::Notify(
     grpc_connectivity_state state, const absl::Status& status) {
-  new Notifier(Ref(), state, status,
-               work_serializer_);  // Deletes itself when done.
+  // Deletes itself when done.
+  new Notifier(RefAsSubclass<AsyncConnectivityStateWatcherInterface>(), state,
+               status, work_serializer_);
 }
 
 //

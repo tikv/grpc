@@ -15,18 +15,18 @@
 // limitations under the License.
 //
 //
-#include <grpc/support/port_platform.h>
-
 #include "src/core/lib/iomgr/error.h"
 
 #include <inttypes.h>
 #include <string.h>
 
+#include "absl/log/check.h"
 #include "absl/strings/str_format.h"
 
 #include <grpc/status.h>
 #include <grpc/support/alloc.h>
 #include <grpc/support/log.h>
+#include <grpc/support/port_platform.h>
 #include <grpc/support/string_util.h>
 
 #include "src/core/lib/gprpp/crash.h"
@@ -70,12 +70,42 @@ absl::Status grpc_os_error(const grpc_core::DebugLocation& location, int err,
 }
 
 #ifdef GPR_WINDOWS
+std::string WSAErrorToShortDescription(int err) {
+  switch (err) {
+    case WSAEACCES:
+      return "Permission denied";
+    case WSAEFAULT:
+      return "Bad address";
+    case WSAEMFILE:
+      return "Too many open files";
+    case WSAEMSGSIZE:
+      return "Message too long";
+    case WSAENETDOWN:
+      return "Network is down";
+    case WSAENETUNREACH:
+      return "Network is unreachable";
+    case WSAENETRESET:
+      return "Network dropped connection on reset";
+    case WSAECONNABORTED:
+      return "Connection aborted";
+    case WSAECONNRESET:
+      return "Connection reset";
+    case WSAETIMEDOUT:
+      return "Connection timed out";
+    case WSAECONNREFUSED:
+      return "Connection refused";
+    case WSAEHOSTUNREACH:
+      return "No route to host";
+    default:
+      return "WSA Error";
+  };
+}
 // TODO(veblush): lift out of iomgr for use in the WindowsEventEngine
 absl::Status grpc_wsa_error(const grpc_core::DebugLocation& location, int err,
                             absl::string_view call_name) {
   char* utf8_message = gpr_format_message(err);
-  absl::Status s =
-      StatusCreate(absl::StatusCode::kUnavailable, "WSA Error", location, {});
+  absl::Status s = StatusCreate(absl::StatusCode::kUnavailable,
+                                WSAErrorToShortDescription(err), location, {});
   StatusSetInt(&s, grpc_core::StatusIntProperty::kWsaError, err);
   StatusSetInt(&s, grpc_core::StatusIntProperty::kRpcStatus,
                GRPC_STATUS_UNAVAILABLE);
@@ -198,7 +228,7 @@ grpc_error_handle grpc_error_add_child(grpc_error_handle src,
 
 bool grpc_log_error(const char* what, grpc_error_handle error, const char* file,
                     int line) {
-  GPR_DEBUG_ASSERT(!error.ok());
+  DCHECK(!error.ok());
   gpr_log(file, line, GPR_LOG_SEVERITY_ERROR, "%s: %s", what,
           grpc_core::StatusToString(error).c_str());
   return false;

@@ -22,11 +22,13 @@
 #include <stdio.h>
 #include <string.h>
 
+#include <memory>
+
 #include "gtest/gtest.h"
 
 #include <grpc/support/time.h>
 
-#include "test/core/util/test_config.h"
+#include "test/core/test_util/test_config.h"
 
 static void to_fp(void* arg, const char* buf, size_t len) {
   fwrite(buf, 1, len, static_cast<FILE*>(arg));

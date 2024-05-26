@@ -23,23 +23,24 @@ cd "$(dirname "$0")/../../.."
 submodules=$(mktemp /tmp/submXXXXXX)
 want_submodules=$(mktemp /tmp/submXXXXXX)
 
-git submodule | awk '{ print $2 " " $1 }' | sort >"$submodules"
+git submodule | sed 's/+//g' | awk '{ print $2 " " $1 }' | sort >"$submodules"
 cat <<EOF | sort >"$want_submodules"
-third_party/abseil-cpp c2435f8342c2d0ed8101cb43adfd605fdc52dca2
-third_party/benchmark 361e8d1cfe0c6c36d30b39f1b61302ece5507320
+third_party/abseil-cpp 4a2c63365eff8823a5221db86ef490e828306f9d
+third_party/benchmark 344117638c8ff7e239044fd0fa7085839fc03021
 third_party/bloaty 60209eb1ccc34d5deefb002d1b7f37545204f7f2
-third_party/boringssl-with-bazel e46383fc18d08def901b2ed5a194295693e905c7
+third_party/boringssl-with-bazel 5a2bca2124800f2861263959b72bc35cdf18949b
 third_party/cares/cares 6360e96b5cf8e5980c887ce58ef727e53d77243a
-third_party/envoy-api 68d4315167352ffac71f149a43b8088397d3f33d
+third_party/envoy-api 78f198cf96ecdc7120ef640406770aa01af775c4
 third_party/googleapis 2f9af297c84c55c8b871ba4495e01ade42476c92
-third_party/googletest 0e402173c97aea7a00749e825b194bfede4f2e45
-third_party/libuv 02a9e1be252b623ee032a3137c0b0c94afbe6809
+third_party/googletest 2dd1c131950043a8ad5ab0d2dda0e0970596586a
 third_party/opencensus-proto 4aa53e15cbf1a47bc9087e6cfdca214c1eea4e89
 third_party/opentelemetry 60fa8754d890b5c55949a8c68dcfd7ab5c2395df
-third_party/protobuf 2dca62f7296e5b49d729f7384f975cecb38382a0
+third_party/opentelemetry-cpp 4bd64c9a336fd438d6c4c9dad2e6b61b0585311f
+third_party/protobuf 2434ef2adf0c74149b9d547ac5fb545a1ff8b6b5
+third_party/protoc-gen-validate fab737efbb4b4d03e7c771393708f75594b121e4
 third_party/re2 0c5616df9c0aaa44c9440d87422012423d91c7d1
-third_party/xds e9ce68804cb4e64cab5a52e3c8baf840d4ff87b7
-third_party/zlib 04f42ceca40f73e2978b50e93806c2a18c1281fc
+third_party/xds 3a472e524827f72d1ad621c4983dd5af54c46776
+third_party/zlib 09155eaa2f9270dc4ed1fa13e2b4b2613e6e4851
 EOF
 
 diff -u "$submodules" "$want_submodules"

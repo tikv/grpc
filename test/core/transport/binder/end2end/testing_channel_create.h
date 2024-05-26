@@ -20,13 +20,13 @@
 #include <grpcpp/grpcpp.h>
 
 #include "src/core/ext/transport/binder/transport/binder_transport.h"
-#include "src/core/lib/surface/server.h"
+#include "src/core/server/server.h"
 #include "test/core/transport/binder/end2end/fake_binder.h"
 
 namespace grpc_binder {
 namespace end2end_testing {
 
-std::pair<grpc_transport*, grpc_transport*>
+std::pair<grpc_core::Transport*, grpc_core::Transport*>
 CreateClientServerBindersPairForTesting();
 
 std::shared_ptr<grpc::Channel> BinderChannelForTesting(

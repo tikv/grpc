@@ -26,7 +26,7 @@
 #include "gmock/gmock.h"
 #include "gtest/gtest.h"
 
-#include "test/core/util/test_config.h"
+#include "test/core/test_util/test_config.h"
 
 namespace grpc_core {
 namespace testing {
@@ -51,6 +51,29 @@ TEST(RefCounted, ExtraRef) {
   foop.release();
   foo->Unref();
   foo->Unref();
+}
+
+TEST(RefCounted, Const) {
+  const Foo* foo = new Foo();
+  RefCountedPtr<const Foo> foop = foo->Ref();
+  foop.release();
+  foop = foo->RefIfNonZero();
+  foop.release();
+  foo->Unref();
+  foo->Unref();
+  foo->Unref();
+}
+
+TEST(RefCounted, SubclassOfRefCountedType) {
+  class Bar : public Foo {};
+  Bar* bar = new Bar();
+  RefCountedPtr<Bar> barp = bar->RefAsSubclass<Bar>();
+  barp.release();
+  barp = bar->RefAsSubclass<Bar>(DEBUG_LOCATION, "whee");
+  barp.release();
+  bar->Unref();
+  bar->Unref();
+  bar->Unref();
 }
 
 class Value : public RefCounted<Value, PolymorphicRefCount, UnrefNoDelete> {
@@ -119,8 +142,8 @@ class ValueInExternalAllocation
 };
 
 TEST(RefCounted, CallDtorUponUnref) {
-  std::aligned_storage<sizeof(ValueInExternalAllocation),
-                       alignof(ValueInExternalAllocation)>::type storage;
+  alignas(ValueInExternalAllocation) char
+      storage[sizeof(ValueInExternalAllocation)];
   RefCountedPtr<ValueInExternalAllocation> value(
       new (&storage) ValueInExternalAllocation(5));
   EXPECT_EQ(value->value(), 5);

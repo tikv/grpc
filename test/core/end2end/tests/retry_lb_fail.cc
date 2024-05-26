@@ -15,18 +15,19 @@
 //
 
 #include <atomic>
+#include <memory>
 
 #include "absl/status/status.h"
 #include "gtest/gtest.h"
 
-#include <grpc/grpc.h>
+#include <grpc/impl/channel_arg_names.h>
 #include <grpc/status.h>
 
 #include "src/core/lib/channel/channel_args.h"
 #include "src/core/lib/config/core_configuration.h"
 #include "src/core/lib/gprpp/time.h"
 #include "test/core/end2end/end2end_tests.h"
-#include "test/core/util/test_lb_policies.h"
+#include "test/core/test_util/test_lb_policies.h"
 
 namespace grpc_core {
 namespace {

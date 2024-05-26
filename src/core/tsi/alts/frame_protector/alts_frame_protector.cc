@@ -16,20 +16,20 @@
 //
 //
 
-#include <grpc/support/port_platform.h>
-
 #include "src/core/tsi/alts/frame_protector/alts_frame_protector.h"
 
 #include <stdio.h>
 #include <stdlib.h>
 
 #include <algorithm>
+#include <memory>
+
+#include "absl/types/span.h"
 
 #include <grpc/support/alloc.h>
 #include <grpc/support/log.h>
+#include <grpc/support/port_platform.h>
 
-#include "src/core/lib/gpr/useful.h"
-#include "src/core/lib/gprpp/crash.h"
 #include "src/core/lib/gprpp/memory.h"
 #include "src/core/tsi/alts/crypt/gsec.h"
 #include "src/core/tsi/alts/frame_protector/alts_crypter.h"
@@ -337,15 +337,18 @@ static grpc_status_code create_alts_crypters(const uint8_t* key,
   grpc_status_code status;
   gsec_aead_crypter* aead_crypter_seal = nullptr;
   gsec_aead_crypter* aead_crypter_unseal = nullptr;
-  status = gsec_aes_gcm_aead_crypter_create(key, key_size, kAesGcmNonceLength,
-                                            kAesGcmTagLength, is_rekey,
-                                            &aead_crypter_seal, error_details);
+  status = gsec_aes_gcm_aead_crypter_create(
+      std::make_unique<grpc_core::GsecKey>(absl::MakeConstSpan(key, key_size),
+                                           is_rekey),
+      kAesGcmNonceLength, kAesGcmTagLength, &aead_crypter_seal, error_details);
   if (status != GRPC_STATUS_OK) {
     return status;
   }
   status = gsec_aes_gcm_aead_crypter_create(
-      key, key_size, kAesGcmNonceLength, kAesGcmTagLength, is_rekey,
-      &aead_crypter_unseal, error_details);
+      std::make_unique<grpc_core::GsecKey>(absl::MakeConstSpan(key, key_size),
+                                           is_rekey),
+      kAesGcmNonceLength, kAesGcmTagLength, &aead_crypter_unseal,
+      error_details);
   if (status != GRPC_STATUS_OK) {
     return status;
   }

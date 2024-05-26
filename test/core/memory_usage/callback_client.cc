@@ -27,8 +27,11 @@
 
 #include "absl/flags/flag.h"
 #include "absl/flags/parse.h"
-#include "absl/strings/string_view.h"
+#include "absl/log/check.h"
+#include "absl/strings/match.h"
+#include "absl/strings/str_cat.h"
 
+#include <grpc/impl/channel_arg_names.h>
 #include <grpc/support/log.h>
 #include <grpcpp/grpcpp.h>
 #include <grpcpp/security/credentials.h>
@@ -39,11 +42,11 @@
 #include "src/proto/grpc/testing/benchmark_service.grpc.pb.h"
 #include "src/proto/grpc/testing/messages.pb.h"
 #include "test/core/memory_usage/memstats.h"
-#include "test/core/util/test_config.h"
+#include "test/core/test_util/test_config.h"
 
 ABSL_FLAG(std::string, target, "", "Target host:port");
 ABSL_FLAG(bool, secure, false, "Use SSL Credentials");
-ABSL_FLAG(int, server_pid, 99999, "Server's pid");
+ABSL_FLAG(int, server_pid, 0, "Server's pid");
 ABSL_FLAG(int, size, 50, "Number of channels");
 
 std::shared_ptr<grpc::Channel> CreateChannelForTest(int index) {
@@ -122,7 +125,7 @@ std::shared_ptr<CallParams> GetBeforeSnapshot(
 int main(int argc, char** argv) {
   absl::ParseCommandLine(argc, argv);
   char* fake_argv[1];
-  GPR_ASSERT(argc >= 1);
+  CHECK_GE(argc, 1);
   fake_argv[0] = argv[0];
   grpc::testing::TestEnvironment env(&argc, argv);
   if (absl::GetFlag(FLAGS_target).empty()) {
@@ -149,25 +152,36 @@ int main(int argc, char** argv) {
   }
 
   // Getting peak memory usage
-  long peak_server_memory = GetMemUsage(absl::GetFlag(FLAGS_server_pid));
+  long peak_server_memory = absl::GetFlag(FLAGS_server_pid) > 0
+                                ? GetMemUsage(absl::GetFlag(FLAGS_server_pid))
+                                : 0;
   long peak_client_memory = GetMemUsage();
 
   // Checking that all channels are still open
   for (int i = 0; i < size; ++i) {
-    GPR_ASSERT(!std::exchange(channels_list[i], nullptr)
-                    ->WaitForStateChange(GRPC_CHANNEL_READY,
-                                         std::chrono::system_clock::now() +
-                                             std::chrono::milliseconds(1)));
+    CHECK(!std::exchange(channels_list[i], nullptr)
+               ->WaitForStateChange(GRPC_CHANNEL_READY,
+                                    std::chrono::system_clock::now() +
+                                        std::chrono::milliseconds(1)));
   }
 
+  std::string prefix;
+  if (absl::StartsWith(absl::GetFlag(FLAGS_target), "xds:")) prefix = "xds ";
+  if (absl::GetFlag(FLAGS_server_pid) == 0) {
+    absl::StrAppend(&prefix, "multi_address ");
+  }
   printf("---------Client channel stats--------\n");
-  printf("client channel memory usage: %f bytes per channel\n",
+  printf("%sclient channel memory usage: %f bytes per channel\n",
+         prefix.c_str(),
          static_cast<double>(peak_client_memory - before_client_memory) / size *
              1024);
-  printf("---------Server channel stats--------\n");
-  printf("server channel memory usage: %f bytes per channel\n",
-         static_cast<double>(peak_server_memory - before_server_memory) / size *
-             1024);
+  if (absl::GetFlag(FLAGS_server_pid) > 0) {
+    printf("---------Server channel stats--------\n");
+    printf("%sserver channel memory usage: %f bytes per channel\n",
+           prefix.c_str(),
+           static_cast<double>(peak_server_memory - before_server_memory) /
+               size * 1024);
+  }
   gpr_log(GPR_INFO, "Client Done");
   return 0;
 }

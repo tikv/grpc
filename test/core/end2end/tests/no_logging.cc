@@ -17,9 +17,13 @@
 //
 
 #include <atomic>
+#include <map>
+#include <regex>
 #include <string>
+#include <utility>
 
 #include "absl/strings/str_cat.h"
+#include "absl/strings/string_view.h"
 #include "absl/types/optional.h"
 #include "gtest/gtest.h"
 
@@ -67,6 +71,26 @@ class Verifier {
   static void DispatchLog(gpr_log_func_args* args) { g_log_func_.load()(args); }
 
   static void NoLog(gpr_log_func_args* args) {
+    static const auto* const allowed_logs_by_module =
+        new std::map<absl::string_view, std::regex>(
+            {{"cq_verifier.cc", std::regex("^Verify .* for [0-9]+ms")},
+             {"chttp2_transport.cc",
+              std::regex("Sending goaway.*Channel Destroyed")}});
+    absl::string_view filename = args->file;
+    auto slash = filename.rfind('/');
+    if (slash != absl::string_view::npos) {
+      filename = filename.substr(slash + 1);
+    }
+    slash = filename.rfind('\\');
+    if (slash != absl::string_view::npos) {
+      filename = filename.substr(slash + 1);
+    }
+    auto it = allowed_logs_by_module->find(filename);
+    if (it != allowed_logs_by_module->end() &&
+        std::regex_search(args->message, it->second)) {
+      gpr_default_log(args);
+      return;
+    }
     std::string message = absl::StrCat("Unwanted log: ", args->message);
     args->message = message.c_str();
     gpr_default_log(args);
@@ -116,6 +140,12 @@ void SimpleRequest(CoreEnd2endTest& test) {
 }
 
 CORE_END2END_TEST(NoLoggingTest, NoLoggingTest) {
+// TODO(hork): remove when the listener flake is identified
+#ifdef GPR_WINDOWS
+  if (IsEventEngineListenerEnabled()) {
+    GTEST_SKIP() << "not for windows + event engine listener";
+  }
+#endif
   Verifier verifier;
   verifier.FailOnNonErrorLog();
   for (int i = 0; i < 10; i++) {

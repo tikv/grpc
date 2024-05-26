@@ -19,8 +19,6 @@
 #ifndef GRPC_SRC_CORE_LIB_TRANSPORT_METADATA_BATCH_H
 #define GRPC_SRC_CORE_LIB_TRANSPORT_METADATA_BATCH_H
 
-#include <grpc/support/port_platform.h>
-
 #include <stdlib.h>
 
 #include <cstdint>
@@ -30,6 +28,7 @@
 
 #include "absl/container/inlined_vector.h"
 #include "absl/functional/function_ref.h"
+#include "absl/log/check.h"
 #include "absl/meta/type_traits.h"
 #include "absl/strings/numbers.h"
 #include "absl/strings/string_view.h"
@@ -38,12 +37,16 @@
 #include <grpc/impl/compression_types.h>
 #include <grpc/status.h>
 #include <grpc/support/log.h>
+#include <grpc/support/port_platform.h>
 
 #include "src/core/lib/compression/compression_internal.h"
+#include "src/core/lib/experiments/experiments.h"
 #include "src/core/lib/gprpp/chunked_vector.h"
+#include "src/core/lib/gprpp/if_list.h"
 #include "src/core/lib/gprpp/packed_table.h"
 #include "src/core/lib/gprpp/time.h"
-#include "src/core/lib/resource_quota/arena.h"
+#include "src/core/lib/gprpp/type_list.h"
+#include "src/core/lib/promise/poll.h"
 #include "src/core/lib/slice/slice.h"
 #include "src/core/lib/transport/custom_metadata.h"
 #include "src/core/lib/transport/metadata_compression_traits.h"
@@ -74,11 +77,14 @@ size_t EncodedSizeOfKey(Key, const typename Key::ValueType& value) {
 // should not need to.
 struct GrpcTimeoutMetadata {
   static constexpr bool kRepeatable = false;
+  static constexpr bool kTransferOnTrailersOnly = false;
   using ValueType = Timestamp;
   using MementoType = Duration;
   using CompressionTraits = TimeoutCompressor;
   static absl::string_view key() { return "grpc-timeout"; }
-  static MementoType ParseMemento(Slice value, MetadataParseErrorFn on_error);
+  static MementoType ParseMemento(Slice value,
+                                  bool will_keep_past_request_lifetime,
+                                  MetadataParseErrorFn on_error);
   static ValueType MementoToValue(MementoType timeout);
   static Slice Encode(ValueType x);
   static std::string DisplayValue(ValueType x) { return x.ToString(); }
@@ -88,6 +94,7 @@ struct GrpcTimeoutMetadata {
 // TE metadata trait.
 struct TeMetadata {
   static constexpr bool kRepeatable = false;
+  static constexpr bool kTransferOnTrailersOnly = false;
   // HTTP2 says that TE can either be empty or "trailers".
   // Empty means this trait is not included, "trailers" means kTrailers, and
   // kInvalid is used to remember an invalid value.
@@ -98,10 +105,12 @@ struct TeMetadata {
   using MementoType = ValueType;
   using CompressionTraits = KnownValueCompressor<ValueType, kTrailers>;
   static absl::string_view key() { return "te"; }
-  static MementoType ParseMemento(Slice value, MetadataParseErrorFn on_error);
+  static MementoType ParseMemento(Slice value,
+                                  bool will_keep_past_request_lifetime,
+                                  MetadataParseErrorFn on_error);
   static ValueType MementoToValue(MementoType te) { return te; }
   static StaticSlice Encode(ValueType x) {
-    GPR_ASSERT(x == kTrailers);
+    CHECK(x == kTrailers);
     return StaticSlice::FromStaticString("trailers");
   }
   static const char* DisplayValue(ValueType te);
@@ -115,6 +124,7 @@ inline size_t EncodedSizeOfKey(TeMetadata, TeMetadata::ValueType x) {
 // content-type metadata trait.
 struct ContentTypeMetadata {
   static constexpr bool kRepeatable = false;
+  static constexpr bool kTransferOnTrailersOnly = true;
   // gRPC says that content-type can be application/grpc[;something]
   // Core has only ever verified the prefix.
   // IF we want to start verifying more, we can expand this type.
@@ -126,7 +136,9 @@ struct ContentTypeMetadata {
   using MementoType = ValueType;
   using CompressionTraits = KnownValueCompressor<ValueType, kApplicationGrpc>;
   static absl::string_view key() { return "content-type"; }
-  static MementoType ParseMemento(Slice value, MetadataParseErrorFn on_error);
+  static MementoType ParseMemento(Slice value,
+                                  bool will_keep_past_request_lifetime,
+                                  MetadataParseErrorFn on_error);
   static ValueType MementoToValue(MementoType content_type) {
     return content_type;
   }
@@ -141,6 +153,7 @@ struct ContentTypeMetadata {
 // scheme metadata trait.
 struct HttpSchemeMetadata {
   static constexpr bool kRepeatable = false;
+  static constexpr bool kTransferOnTrailersOnly = false;
   enum ValueType : uint8_t {
     kHttp,
     kHttps,
@@ -149,7 +162,8 @@ struct HttpSchemeMetadata {
   using MementoType = ValueType;
   using CompressionTraits = HttpSchemeCompressor;
   static absl::string_view key() { return ":scheme"; }
-  static MementoType ParseMemento(Slice value, MetadataParseErrorFn on_error) {
+  static MementoType ParseMemento(Slice value, bool,
+                                  MetadataParseErrorFn on_error) {
     return Parse(value.as_string_view(), on_error);
   }
   static ValueType Parse(absl::string_view value,
@@ -169,6 +183,7 @@ size_t EncodedSizeOfKey(HttpSchemeMetadata, HttpSchemeMetadata::ValueType x);
 // method metadata trait.
 struct HttpMethodMetadata {
   static constexpr bool kRepeatable = false;
+  static constexpr bool kTransferOnTrailersOnly = false;
   enum ValueType : uint8_t {
     kPost,
     kGet,
@@ -178,7 +193,9 @@ struct HttpMethodMetadata {
   using MementoType = ValueType;
   using CompressionTraits = HttpMethodCompressor;
   static absl::string_view key() { return ":method"; }
-  static MementoType ParseMemento(Slice value, MetadataParseErrorFn on_error);
+  static MementoType ParseMemento(Slice value,
+                                  bool will_keep_past_request_lifetime,
+                                  MetadataParseErrorFn on_error);
   static ValueType MementoToValue(MementoType content_type) {
     return content_type;
   }
@@ -194,10 +211,12 @@ struct HttpMethodMetadata {
 struct CompressionAlgorithmBasedMetadata {
   using ValueType = grpc_compression_algorithm;
   using MementoType = ValueType;
-  static MementoType ParseMemento(Slice value, MetadataParseErrorFn on_error);
+  static MementoType ParseMemento(Slice value,
+                                  bool will_keep_past_request_lifetime,
+                                  MetadataParseErrorFn on_error);
   static ValueType MementoToValue(MementoType x) { return x; }
   static Slice Encode(ValueType x) {
-    GPR_ASSERT(x != GRPC_COMPRESS_ALGORITHMS_COUNT);
+    CHECK(x != GRPC_COMPRESS_ALGORITHMS_COUNT);
     return Slice::FromStaticString(CompressionAlgorithmAsString(x));
   }
   static const char* DisplayValue(ValueType x) {
@@ -213,6 +232,7 @@ struct CompressionAlgorithmBasedMetadata {
 // grpc-encoding metadata trait.
 struct GrpcEncodingMetadata : public CompressionAlgorithmBasedMetadata {
   static constexpr bool kRepeatable = false;
+  static constexpr bool kTransferOnTrailersOnly = false;
   using CompressionTraits =
       SmallIntegralValuesCompressor<GRPC_COMPRESS_ALGORITHMS_COUNT>;
   static absl::string_view key() { return "grpc-encoding"; }
@@ -221,6 +241,7 @@ struct GrpcEncodingMetadata : public CompressionAlgorithmBasedMetadata {
 // grpc-internal-encoding-request metadata trait.
 struct GrpcInternalEncodingRequest : public CompressionAlgorithmBasedMetadata {
   static constexpr bool kRepeatable = false;
+  static constexpr bool kTransferOnTrailersOnly = false;
   using CompressionTraits = NoCompressionCompressor;
   static absl::string_view key() { return "grpc-internal-encoding-request"; }
 };
@@ -228,11 +249,12 @@ struct GrpcInternalEncodingRequest : public CompressionAlgorithmBasedMetadata {
 // grpc-accept-encoding metadata trait.
 struct GrpcAcceptEncodingMetadata {
   static constexpr bool kRepeatable = false;
+  static constexpr bool kTransferOnTrailersOnly = false;
   static absl::string_view key() { return "grpc-accept-encoding"; }
   using ValueType = CompressionAlgorithmSet;
   using MementoType = ValueType;
   using CompressionTraits = StableValueCompressor;
-  static MementoType ParseMemento(Slice value, MetadataParseErrorFn) {
+  static MementoType ParseMemento(Slice value, bool, MetadataParseErrorFn) {
     return CompressionAlgorithmSet::FromString(value.as_string_view());
   }
   static ValueType MementoToValue(MementoType x) { return x; }
@@ -246,6 +268,7 @@ struct GrpcAcceptEncodingMetadata {
 // user-agent metadata trait.
 struct UserAgentMetadata : public SimpleSliceBasedMetadata {
   static constexpr bool kRepeatable = false;
+  static constexpr bool kTransferOnTrailersOnly = false;
   using CompressionTraits = StableValueCompressor;
   static absl::string_view key() { return "user-agent"; }
 };
@@ -253,6 +276,7 @@ struct UserAgentMetadata : public SimpleSliceBasedMetadata {
 // grpc-message metadata trait.
 struct GrpcMessageMetadata : public SimpleSliceBasedMetadata {
   static constexpr bool kRepeatable = false;
+  static constexpr bool kTransferOnTrailersOnly = false;
   using CompressionTraits = NoCompressionCompressor;
   static absl::string_view key() { return "grpc-message"; }
 };
@@ -260,6 +284,7 @@ struct GrpcMessageMetadata : public SimpleSliceBasedMetadata {
 // host metadata trait.
 struct HostMetadata : public SimpleSliceBasedMetadata {
   static constexpr bool kRepeatable = false;
+  static constexpr bool kTransferOnTrailersOnly = false;
   using CompressionTraits = NoCompressionCompressor;
   static absl::string_view key() { return "host"; }
 };
@@ -267,6 +292,7 @@ struct HostMetadata : public SimpleSliceBasedMetadata {
 // endpoint-load-metrics-bin metadata trait.
 struct EndpointLoadMetricsBinMetadata : public SimpleSliceBasedMetadata {
   static constexpr bool kRepeatable = false;
+  static constexpr bool kTransferOnTrailersOnly = false;
   using CompressionTraits = NoCompressionCompressor;
   static absl::string_view key() { return "endpoint-load-metrics-bin"; }
 };
@@ -274,6 +300,7 @@ struct EndpointLoadMetricsBinMetadata : public SimpleSliceBasedMetadata {
 // grpc-server-stats-bin metadata trait.
 struct GrpcServerStatsBinMetadata : public SimpleSliceBasedMetadata {
   static constexpr bool kRepeatable = false;
+  static constexpr bool kTransferOnTrailersOnly = false;
   using CompressionTraits = NoCompressionCompressor;
   static absl::string_view key() { return "grpc-server-stats-bin"; }
 };
@@ -281,6 +308,7 @@ struct GrpcServerStatsBinMetadata : public SimpleSliceBasedMetadata {
 // grpc-trace-bin metadata trait.
 struct GrpcTraceBinMetadata : public SimpleSliceBasedMetadata {
   static constexpr bool kRepeatable = false;
+  static constexpr bool kTransferOnTrailersOnly = false;
   using CompressionTraits = FrequentKeyWithNoValueCompressionCompressor;
   static absl::string_view key() { return "grpc-trace-bin"; }
 };
@@ -288,13 +316,23 @@ struct GrpcTraceBinMetadata : public SimpleSliceBasedMetadata {
 // grpc-tags-bin metadata trait.
 struct GrpcTagsBinMetadata : public SimpleSliceBasedMetadata {
   static constexpr bool kRepeatable = false;
+  static constexpr bool kTransferOnTrailersOnly = false;
   using CompressionTraits = FrequentKeyWithNoValueCompressionCompressor;
   static absl::string_view key() { return "grpc-tags-bin"; }
+};
+
+// XEnvoyPeerMetadata
+struct XEnvoyPeerMetadata : public SimpleSliceBasedMetadata {
+  static constexpr bool kRepeatable = false;
+  static constexpr bool kTransferOnTrailersOnly = true;
+  using CompressionTraits = StableValueCompressor;
+  static absl::string_view key() { return "x-envoy-peer-metadata"; }
 };
 
 // :authority metadata trait.
 struct HttpAuthorityMetadata : public SimpleSliceBasedMetadata {
   static constexpr bool kRepeatable = false;
+  static constexpr bool kTransferOnTrailersOnly = false;
   using CompressionTraits = SmallSetOfValuesCompressor;
   static absl::string_view key() { return ":authority"; }
 };
@@ -302,6 +340,7 @@ struct HttpAuthorityMetadata : public SimpleSliceBasedMetadata {
 // :path metadata trait.
 struct HttpPathMetadata : public SimpleSliceBasedMetadata {
   static constexpr bool kRepeatable = false;
+  static constexpr bool kTransferOnTrailersOnly = false;
   using CompressionTraits = SmallSetOfValuesCompressor;
   static absl::string_view key() { return ":path"; }
 };
@@ -322,7 +361,7 @@ struct SimpleIntBasedMetadataBase {
 template <typename Int, Int kInvalidValue>
 struct SimpleIntBasedMetadata : public SimpleIntBasedMetadataBase<Int> {
   static constexpr Int invalid_value() { return kInvalidValue; }
-  static Int ParseMemento(Slice value, MetadataParseErrorFn on_error) {
+  static Int ParseMemento(Slice value, bool, MetadataParseErrorFn on_error) {
     Int out;
     if (!absl::SimpleAtoi(value.as_string_view(), &out)) {
       on_error("not an integer", value);
@@ -336,6 +375,7 @@ struct SimpleIntBasedMetadata : public SimpleIntBasedMetadataBase<Int> {
 struct GrpcStatusMetadata
     : public SimpleIntBasedMetadata<grpc_status_code, GRPC_STATUS_UNKNOWN> {
   static constexpr bool kRepeatable = false;
+  static constexpr bool kTransferOnTrailersOnly = false;
   using CompressionTraits = SmallIntegralValuesCompressor<16>;
   static absl::string_view key() { return "grpc-status"; }
 };
@@ -344,6 +384,7 @@ struct GrpcStatusMetadata
 struct GrpcPreviousRpcAttemptsMetadata
     : public SimpleIntBasedMetadata<uint32_t, 0> {
   static constexpr bool kRepeatable = false;
+  static constexpr bool kTransferOnTrailersOnly = false;
   using CompressionTraits = NoCompressionCompressor;
   static absl::string_view key() { return "grpc-previous-rpc-attempts"; }
 };
@@ -351,6 +392,7 @@ struct GrpcPreviousRpcAttemptsMetadata
 // grpc-retry-pushback-ms metadata trait.
 struct GrpcRetryPushbackMsMetadata {
   static constexpr bool kRepeatable = false;
+  static constexpr bool kTransferOnTrailersOnly = false;
   static absl::string_view key() { return "grpc-retry-pushback-ms"; }
   using ValueType = Duration;
   using MementoType = Duration;
@@ -359,13 +401,16 @@ struct GrpcRetryPushbackMsMetadata {
   static Slice Encode(Duration x) { return Slice::FromInt64(x.millis()); }
   static int64_t DisplayValue(Duration x) { return x.millis(); }
   static int64_t DisplayMemento(Duration x) { return DisplayValue(x); }
-  static Duration ParseMemento(Slice value, MetadataParseErrorFn on_error);
+  static Duration ParseMemento(Slice value,
+                               bool will_keep_past_request_lifetime,
+                               MetadataParseErrorFn on_error);
 };
 
 // :status metadata trait.
 // TODO(ctiller): consider moving to uint16_t
 struct HttpStatusMetadata : public SimpleIntBasedMetadata<uint32_t, 0> {
   static constexpr bool kRepeatable = false;
+  static constexpr bool kTransferOnTrailersOnly = true;
   using CompressionTraits = HttpStatusCompressor;
   static absl::string_view key() { return ":status"; }
 };
@@ -376,6 +421,7 @@ class GrpcLbClientStats;
 
 struct GrpcLbClientStatsMetadata {
   static constexpr bool kRepeatable = false;
+  static constexpr bool kTransferOnTrailersOnly = false;
   static absl::string_view key() { return "grpclb_client_stats"; }
   using ValueType = GrpcLbClientStats*;
   using MementoType = ValueType;
@@ -386,7 +432,8 @@ struct GrpcLbClientStatsMetadata {
   static const char* DisplayMemento(MementoType) {
     return "<internal-lb-stats>";
   }
-  static MementoType ParseMemento(Slice, MetadataParseErrorFn) {
+  static MementoType ParseMemento(Slice, bool, MetadataParseErrorFn error) {
+    error("not a valid value for grpclb_client_stats", Slice());
     return nullptr;
   }
 };
@@ -399,6 +446,7 @@ inline size_t EncodedSizeOfKey(GrpcLbClientStatsMetadata,
 // lb-token metadata
 struct LbTokenMetadata : public SimpleSliceBasedMetadata {
   static constexpr bool kRepeatable = false;
+  static constexpr bool kTransferOnTrailersOnly = false;
   using CompressionTraits = NoCompressionCompressor;
   static absl::string_view key() { return "lb-token"; }
 };
@@ -406,6 +454,7 @@ struct LbTokenMetadata : public SimpleSliceBasedMetadata {
 // lb-cost-bin metadata
 struct LbCostBinMetadata {
   static constexpr bool kRepeatable = true;
+  static constexpr bool kTransferOnTrailersOnly = false;
   static absl::string_view key() { return "lb-cost-bin"; }
   struct ValueType {
     double cost;
@@ -417,7 +466,9 @@ struct LbCostBinMetadata {
   static Slice Encode(const ValueType& x);
   static std::string DisplayValue(ValueType x);
   static std::string DisplayMemento(MementoType x) { return DisplayValue(x); }
-  static MementoType ParseMemento(Slice value, MetadataParseErrorFn on_error);
+  static MementoType ParseMemento(Slice value,
+                                  bool will_keep_past_request_lifetime,
+                                  MetadataParseErrorFn on_error);
 };
 
 // Annotation added by a transport to note whether a failed request was never
@@ -425,6 +476,7 @@ struct LbCostBinMetadata {
 struct GrpcStreamNetworkState {
   static absl::string_view DebugKey() { return "GrpcStreamNetworkState"; }
   static constexpr bool kRepeatable = false;
+  static constexpr bool kTransferOnTrailersOnly = false;
   enum ValueType : uint8_t {
     kNotSentOnWire,
     kNotSeenByServer,
@@ -485,6 +537,25 @@ struct GrpcTrailersOnly {
   static absl::string_view DisplayValue(bool x) { return x ? "true" : "false"; }
 };
 
+// On the client-side, the value is a uintptr_t with a value of 1 if the call
+// has a registered/known method, or 0, if it's not known. On the server side,
+// the value is a (ChannelRegisteredMethod*).
+struct GrpcRegisteredMethod {
+  static absl::string_view DebugKey() { return "GrpcRegisteredMethod"; }
+  static constexpr bool kRepeatable = false;
+  using ValueType = void*;
+  static std::string DisplayValue(void* x);
+};
+
+// Annotation added by filters to inform the transport to tarpit this
+// response: add some random delay to thwart certain kinds of attacks.
+struct GrpcTarPit {
+  static absl::string_view DebugKey() { return "GrpcTarPit"; }
+  static constexpr bool kRepeatable = false;
+  using ValueType = Empty;
+  static absl::string_view DisplayValue(Empty) { return "tarpit"; }
+};
+
 namespace metadata_detail {
 
 // Build a key/value formatted debug string.
@@ -492,14 +563,17 @@ namespace metadata_detail {
 // The string is expected to be readable, but not necessarily parsable.
 class DebugStringBuilder {
  public:
-  // Add one key/value pair to the output.
-  void Add(absl::string_view key, absl::string_view value);
+  // Add one key/value pair to the output if it is allow listed.
+  // Redact only the value if it is not allow listed.
+  void AddAfterRedaction(absl::string_view key, absl::string_view value);
 
   // Finalize the output and return the string.
   // Subsequent Add calls are UB.
   std::string TakeOutput() { return std::move(out_); }
 
  private:
+  bool IsAllowListed(absl::string_view key) const;
+  void Add(absl::string_view key, absl::string_view value);
   std::string out_;
 };
 
@@ -517,43 +591,52 @@ struct IsEncodableTrait<Trait, absl::void_t<decltype(Trait::key())>> {
   static const bool value = true;
 };
 
-// Helper type - maps a string name to a trait.
 template <typename MustBeVoid, typename... Traits>
-struct NameLookup;
+struct EncodableTraits;
 
 template <typename Trait, typename... Traits>
-struct NameLookup<absl::enable_if_t<IsEncodableTrait<Trait>::value, void>,
-                  Trait, Traits...> {
-  // Call op->Found(Trait()) if op->name == Trait::key() for some Trait in
-  // Traits. If not found, call op->NotFound().
-  template <typename Op>
-  static auto Lookup(absl::string_view key, Op* op)
-      -> decltype(op->Found(Trait())) {
-    if (key == Trait::key()) {
-      return op->Found(Trait());
-    }
-    return NameLookup<void, Traits...>::Lookup(key, op);
-  }
+struct EncodableTraits<absl::enable_if_t<IsEncodableTrait<Trait>::value, void>,
+                       Trait, Traits...> {
+  using List =
+      typename EncodableTraits<void,
+                               Traits...>::List::template PushFront<Trait>;
 };
 
 template <typename Trait, typename... Traits>
-struct NameLookup<absl::enable_if_t<!IsEncodableTrait<Trait>::value, void>,
-                  Trait, Traits...> {
-  template <typename Op>
-  static auto Lookup(absl::string_view key, Op* op)
-      -> decltype(NameLookup<void, Traits...>::Lookup(key, op)) {
-    return NameLookup<void, Traits...>::Lookup(key, op);
-  }
+struct EncodableTraits<absl::enable_if_t<!IsEncodableTrait<Trait>::value, void>,
+                       Trait, Traits...> {
+  using List = typename EncodableTraits<void, Traits...>::List;
 };
 
 template <>
-struct NameLookup<void> {
+struct EncodableTraits<void> {
+  using List = Typelist<>;
+};
+
+template <typename Trait>
+struct EncodableNameLookupKeyComparison {
+  bool operator()(absl::string_view key) { return key == Trait::key(); }
+};
+
+template <typename Trait, typename Op>
+struct EncodableNameLookupOnFound {
+  auto operator()(Op* op) { return op->Found(Trait()); }
+};
+
+template <typename... Traits>
+struct EncodableNameLookup {
   template <typename Op>
-  static auto Lookup(absl::string_view key, Op* op)
-      -> decltype(op->NotFound(key)) {
-    return op->NotFound(key);
+  static auto Lookup(absl::string_view key, Op* op) {
+    return IfList(
+        key, op, [key](Op* op) { return op->NotFound(key); },
+        EncodableNameLookupKeyComparison<Traits>()...,
+        EncodableNameLookupOnFound<Traits, Op>()...);
   }
 };
+
+template <typename... Traits>
+using NameLookup = typename EncodableTraits<
+    void, Traits...>::List::template Instantiate<EncodableNameLookup>;
 
 // Helper to take a slice to a memento to a value.
 // By splitting this part out we can scale code size as the number of
@@ -563,9 +646,9 @@ struct ParseValue {
   template <ParseMementoFn parse_memento, MementoToValueFn memento_to_value>
   static GPR_ATTRIBUTE_NOINLINE auto Parse(Slice* value,
                                            MetadataParseErrorFn on_error)
-      -> decltype(memento_to_value(parse_memento(std::move(*value),
+      -> decltype(memento_to_value(parse_memento(std::move(*value), false,
                                                  on_error))) {
-    return memento_to_value(parse_memento(std::move(*value), on_error));
+    return memento_to_value(parse_memento(std::move(*value), false, on_error));
   }
 };
 
@@ -575,8 +658,10 @@ struct ParseValue {
 template <typename Container>
 class ParseHelper {
  public:
-  ParseHelper(Slice value, MetadataParseErrorFn on_error, size_t transport_size)
+  ParseHelper(Slice value, bool will_keep_past_request_lifetime,
+              MetadataParseErrorFn on_error, size_t transport_size)
       : value_(std::move(value)),
+        will_keep_past_request_lifetime_(will_keep_past_request_lifetime),
         on_error_(on_error),
         transport_size_(transport_size) {}
 
@@ -592,16 +677,21 @@ class ParseHelper {
       absl::string_view key) {
     return ParsedMetadata<Container>(
         typename ParsedMetadata<Container>::FromSlicePair{},
-        Slice::FromCopiedString(key), std::move(value_), transport_size_);
+        Slice::FromCopiedString(key),
+        will_keep_past_request_lifetime_ ? value_.TakeUniquelyOwned()
+                                         : std::move(value_),
+        transport_size_);
   }
 
  private:
-  template <typename T, T (*parse_memento)(Slice, MetadataParseErrorFn)>
+  template <typename T, T (*parse_memento)(Slice, bool, MetadataParseErrorFn)>
   GPR_ATTRIBUTE_NOINLINE T ParseValueToMemento() {
-    return parse_memento(std::move(value_), on_error_);
+    return parse_memento(std::move(value_), will_keep_past_request_lifetime_,
+                         on_error_);
   }
 
   Slice value_;
+  const bool will_keep_past_request_lifetime_;
   MetadataParseErrorFn on_error_;
   const size_t transport_size_;
 };
@@ -986,26 +1076,23 @@ class TransportSizeEncoder {
 // Handle unknown (non-trait-based) fields in the metadata map.
 class UnknownMap {
  public:
-  explicit UnknownMap(Arena* arena) : unknown_(arena) {}
-
-  using BackingType = ChunkedVector<std::pair<Slice, Slice>, 10>;
+  using BackingType = std::vector<std::pair<Slice, Slice>>;
 
   void Append(absl::string_view key, Slice value);
   void Remove(absl::string_view key);
   absl::optional<absl::string_view> GetStringValue(absl::string_view key,
                                                    std::string* backing) const;
 
-  BackingType::ConstForwardIterator begin() const { return unknown_.cbegin(); }
-  BackingType::ConstForwardIterator end() const { return unknown_.cend(); }
+  BackingType::const_iterator begin() const { return unknown_.cbegin(); }
+  BackingType::const_iterator end() const { return unknown_.cend(); }
 
   bool empty() const { return unknown_.empty(); }
   size_t size() const { return unknown_.size(); }
-  void Clear() { unknown_.Clear(); }
-  Arena* arena() const { return unknown_.arena(); }
+  void Clear() { unknown_.clear(); }
 
  private:
   // Backing store for added metadata.
-  ChunkedVector<std::pair<Slice, Slice>, 10> unknown_;
+  BackingType unknown_;
 };
 
 // Given a factory template Factory, construct a type that derives from
@@ -1088,6 +1175,9 @@ MetadataValueAsSlice(typename Which::ValueType value) {
 // struct GrpcXyzMetadata {
 //   // Can this metadata field be repeated?
 //   static constexpr bool kRepeatable = ...;
+//   // Should this metadata be transferred from server headers to trailers on
+//   // Trailers-Only response?
+//   static constexpr bool kTransferOnTrailersOnly = ...;
 //   // The type that's stored on MetadataBatch
 //   using ValueType = ...;
 //   // The type that's stored in compression/decompression tables
@@ -1096,8 +1186,14 @@ MetadataValueAsSlice(typename Which::ValueType value) {
 //   static absl::string_view key() { return "grpc-xyz"; }
 //   // Parse a memento from a slice
 //   // Takes ownership of value
+//   // If will_keep_past_request_lifetime is true, expect that the returned
+//   // memento will be kept for a long time, and so try not to keep a ref to
+//   // the input slice.
 //   // Calls fn in the case of an error that should be reported to the user
-//   static MementoType ParseMemento(Slice value, MementoParseErrorFn fn) {
+//   static MementoType ParseMemento(
+//       Slice value,
+//       bool will_keep_past_request_lifetime,
+//       MementoParseErrorFn fn) {
 //   ...
 //   }
 //   // Convert a memento to a value
@@ -1152,7 +1248,7 @@ MetadataValueAsSlice(typename Which::ValueType value) {
 template <class Derived, typename... Traits>
 class MetadataMap {
  public:
-  explicit MetadataMap(Arena* arena);
+  MetadataMap() = default;
   ~MetadataMap();
 
   // Given a compressor factory - template taking <MetadataTrait,
@@ -1213,7 +1309,7 @@ class MetadataMap {
   std::string DebugString() const {
     metadata_detail::DebugStringBuilder builder;
     Log([&builder](absl::string_view key, absl::string_view value) {
-      builder.Add(key, value);
+      builder.AddAfterRedaction(key, value);
     });
     return builder.TakeOutput();
   }
@@ -1277,7 +1373,7 @@ class MetadataMap {
   // Remove some metadata by name
   void Remove(absl::string_view key) {
     metadata_detail::RemoveHelper<Derived> helper(static_cast<Derived*>(this));
-    metadata_detail::NameLookup<void, Traits...>::Lookup(key, &helper);
+    metadata_detail::NameLookup<Traits...>::Lookup(key, &helper);
   }
 
   void Remove(const char* key) { Remove(absl::string_view(key)); }
@@ -1287,7 +1383,7 @@ class MetadataMap {
                                                    std::string* buffer) const {
     metadata_detail::GetStringValueHelper<Derived> helper(
         static_cast<const Derived*>(this), buffer);
-    return metadata_detail::NameLookup<void, Traits...>::Lookup(name, &helper);
+    return metadata_detail::NameLookup<Traits...>::Lookup(name, &helper);
   }
 
   // Extract a piece of known metadata.
@@ -1324,11 +1420,13 @@ class MetadataMap {
   // Parse metadata from a key/value pair, and return an object representing
   // that result.
   static ParsedMetadata<Derived> Parse(absl::string_view key, Slice value,
+                                       bool will_keep_past_request_lifetime,
                                        uint32_t transport_size,
                                        MetadataParseErrorFn on_error) {
-    metadata_detail::ParseHelper<Derived> helper(value.TakeOwned(), on_error,
-                                                 transport_size);
-    return metadata_detail::NameLookup<void, Traits...>::Lookup(key, &helper);
+    metadata_detail::ParseHelper<Derived> helper(
+        value.TakeOwned(), will_keep_past_request_lifetime, on_error,
+        transport_size);
+    return metadata_detail::NameLookup<Traits...>::Lookup(key, &helper);
   }
 
   // Set a value from a parsed metadata object.
@@ -1341,7 +1439,7 @@ class MetadataMap {
               MetadataParseErrorFn on_error) {
     metadata_detail::AppendHelper<Derived> helper(static_cast<Derived*>(this),
                                                   value.TakeOwned(), on_error);
-    metadata_detail::NameLookup<void, Traits...>::Lookup(key, &helper);
+    metadata_detail::NameLookup<Traits...>::Lookup(key, &helper);
   }
 
   void Clear();
@@ -1372,9 +1470,6 @@ inline bool IsStatusOk(const MetadataMap<Derived, Args...>& m) {
   return m.get(GrpcStatusMetadata()).value_or(GRPC_STATUS_UNKNOWN) ==
          GRPC_STATUS_OK;
 }
-
-template <typename Derived, typename... Traits>
-MetadataMap<Derived, Traits...>::MetadataMap(Arena* arena) : unknown_(arena) {}
 
 template <typename Derived, typename... Traits>
 MetadataMap<Derived, Traits...>::MetadataMap(MetadataMap&& other) noexcept
@@ -1409,7 +1504,7 @@ size_t MetadataMap<Derived, Traits...>::TransportSize() const {
 
 template <typename Derived, typename... Traits>
 Derived MetadataMap<Derived, Traits...>::Copy() const {
-  Derived out(unknown_.arena());
+  Derived out;
   metadata_detail::CopySink<Derived> sink(&out);
   ForEach(&sink);
   return out;
@@ -1436,11 +1531,13 @@ using grpc_metadata_batch_base = grpc_core::MetadataMap<
     grpc_core::GrpcServerStatsBinMetadata, grpc_core::GrpcTraceBinMetadata,
     grpc_core::GrpcTagsBinMetadata, grpc_core::GrpcLbClientStatsMetadata,
     grpc_core::LbCostBinMetadata, grpc_core::LbTokenMetadata,
+    grpc_core::XEnvoyPeerMetadata,
     // Non-encodable things
     grpc_core::GrpcStreamNetworkState, grpc_core::PeerString,
     grpc_core::GrpcStatusContext, grpc_core::GrpcStatusFromWire,
     grpc_core::GrpcCallWasCancelled, grpc_core::WaitForReady,
-    grpc_core::GrpcTrailersOnly GRPC_CUSTOM_CLIENT_METADATA
+    grpc_core::GrpcTrailersOnly, grpc_core::GrpcTarPit,
+    grpc_core::GrpcRegisteredMethod GRPC_CUSTOM_CLIENT_METADATA
         GRPC_CUSTOM_SERVER_METADATA>;
 
 struct grpc_metadata_batch : public grpc_metadata_batch_base {

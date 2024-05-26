@@ -61,6 +61,7 @@ FailingStub = FailingService.rpc_stub_class
 class SlowService
   include GRPC::GenericService
   rpc :an_rpc, EchoMsg, EchoMsg
+  rpc :a_server_streaming_rpc, EchoMsg, stream(EchoMsg)
   attr_reader :received_md, :delay
 
   def initialize(_default_var = 'ignored')
@@ -73,6 +74,13 @@ class SlowService
     sleep @delay
     @received_md << call.metadata unless call.metadata.nil?
     req  # send back the req as the response
+  end
+
+  def a_server_streaming_rpc(_, call)
+    GRPC.logger.info("starting a slow #{@delay} server streaming rpc")
+    sleep @delay
+    @received_md << call.metadata unless call.metadata.nil?
+    [EchoMsg.new, EchoMsg.new]
   end
 end
 
@@ -410,6 +418,23 @@ describe GRPC::RpcServer do
         t.join
       end
 
+      it 'should raise DeadlineExceeded', server: true do
+        service = SlowService.new
+        @srv.handle(service)
+        t = Thread.new { @srv.run }
+        @srv.wait_till_running
+        req = EchoMsg.new
+        stub = SlowStub.new(@host, :this_channel_is_insecure, **client_opts)
+        timeout = service.delay - 0.1
+        deadline = GRPC::Core::TimeConsts.from_relative_time(timeout)
+        responses = stub.a_server_streaming_rpc(req,
+                                                deadline: deadline,
+                                                metadata: { k1: 'v1', k2: 'v2' })
+        expect { responses.to_a }.to raise_error(GRPC::DeadlineExceeded)
+        @srv.stop
+        t.join
+      end
+
       it 'should handle cancellation correctly', server: true do
         request_received = false
         request_received_mu = Mutex.new
@@ -668,9 +693,9 @@ describe GRPC::RpcServer do
       def check_multi_req_view_of_finished_call(call)
         common_check_of_finished_server_call(call)
 
-        expect do
-          call.each_remote_read.each { |r| p r }
-        end.to raise_error(GRPC::Core::CallError)
+        l = []
+        call.each_remote_read.each { |r| l << r }
+        expect(l.size).to eq(0)
       end
 
       def common_check_of_finished_server_call(call)

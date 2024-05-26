@@ -16,9 +16,9 @@
 //
 //
 
-#include <grpc/support/port_platform.h>
-
 #include "absl/types/optional.h"
+
+#include <grpc/support/port_platform.h>
 
 #include "src/core/lib/iomgr/port.h"
 
@@ -93,6 +93,8 @@ PosixTcpOptions TcpOptionsFromEndpointConfig(const EndpointConfig& config) {
   options.allow_reuse_port =
       (AdjustValue(0, 1, INT_MAX, config.GetInt(GRPC_ARG_ALLOW_REUSEPORT)) !=
        0);
+  options.dscp = AdjustValue(PosixTcpOptions::kDscpNotSet, 0, 63,
+                             config.GetInt(GRPC_ARG_DSCP));
 
   if (options.tcp_min_read_chunk_size > options.tcp_max_read_chunk_size) {
     options.tcp_min_read_chunk_size = options.tcp_max_read_chunk_size;

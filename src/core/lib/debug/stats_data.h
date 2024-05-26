@@ -17,8 +17,6 @@
 #ifndef GRPC_SRC_CORE_LIB_DEBUG_STATS_DATA_H
 #define GRPC_SRC_CORE_LIB_DEBUG_STATS_DATA_H
 
-#include <grpc/support/port_platform.h>
-
 #include <stdint.h>
 
 #include <atomic>
@@ -26,10 +24,35 @@
 
 #include "absl/strings/string_view.h"
 
+#include <grpc/support/port_platform.h>
+
 #include "src/core/lib/debug/histogram_view.h"
 #include "src/core/lib/gprpp/per_cpu.h"
 
 namespace grpc_core {
+class HistogramCollector_100000_20;
+class Histogram_100000_20 {
+ public:
+  static int BucketFor(int value);
+  const uint64_t* buckets() const { return buckets_; }
+  friend Histogram_100000_20 operator-(const Histogram_100000_20& left,
+                                       const Histogram_100000_20& right);
+
+ private:
+  friend class HistogramCollector_100000_20;
+  uint64_t buckets_[20]{};
+};
+class HistogramCollector_100000_20 {
+ public:
+  void Increment(int value) {
+    buckets_[Histogram_100000_20::BucketFor(value)].fetch_add(
+        1, std::memory_order_relaxed);
+  }
+  void Collect(Histogram_100000_20* result) const;
+
+ private:
+  std::atomic<uint64_t> buckets_[20]{};
+};
 class HistogramCollector_65536_26;
 class Histogram_65536_26 {
  public:
@@ -52,6 +75,29 @@ class HistogramCollector_65536_26 {
 
  private:
   std::atomic<uint64_t> buckets_[26]{};
+};
+class HistogramCollector_100_20;
+class Histogram_100_20 {
+ public:
+  static int BucketFor(int value);
+  const uint64_t* buckets() const { return buckets_; }
+  friend Histogram_100_20 operator-(const Histogram_100_20& left,
+                                    const Histogram_100_20& right);
+
+ private:
+  friend class HistogramCollector_100_20;
+  uint64_t buckets_[20]{};
+};
+class HistogramCollector_100_20 {
+ public:
+  void Increment(int value) {
+    buckets_[Histogram_100_20::BucketFor(value)].fetch_add(
+        1, std::memory_order_relaxed);
+  }
+  void Collect(Histogram_100_20* result) const;
+
+ private:
+  std::atomic<uint64_t> buckets_[20]{};
 };
 class HistogramCollector_16777216_20;
 class Histogram_16777216_20 {
@@ -99,6 +145,29 @@ class HistogramCollector_80_10 {
  private:
   std::atomic<uint64_t> buckets_[10]{};
 };
+class HistogramCollector_10000_20;
+class Histogram_10000_20 {
+ public:
+  static int BucketFor(int value);
+  const uint64_t* buckets() const { return buckets_; }
+  friend Histogram_10000_20 operator-(const Histogram_10000_20& left,
+                                      const Histogram_10000_20& right);
+
+ private:
+  friend class HistogramCollector_10000_20;
+  uint64_t buckets_[20]{};
+};
+class HistogramCollector_10000_20 {
+ public:
+  void Increment(int value) {
+    buckets_[Histogram_10000_20::BucketFor(value)].fetch_add(
+        1, std::memory_order_relaxed);
+  }
+  void Collect(Histogram_10000_20* result) const;
+
+ private:
+  std::atomic<uint64_t> buckets_[20]{};
+};
 struct GlobalStats {
   enum class Counter {
     kClientCallsCreated,
@@ -119,6 +188,20 @@ struct GlobalStats {
     kCqPluckCreates,
     kCqNextCreates,
     kCqCallbackCreates,
+    kWrrUpdates,
+    kWorkSerializerItemsEnqueued,
+    kWorkSerializerItemsDequeued,
+    kEconnabortedCount,
+    kEconnresetCount,
+    kEpipeCount,
+    kEtimedoutCount,
+    kEconnrefusedCount,
+    kEnetunreachCount,
+    kEnomsgCount,
+    kEnotconnCount,
+    kEnobufsCount,
+    kUncommonIoErrorCount,
+    kMsgErrqueueErrorCount,
     COUNT
   };
   enum class Histogram {
@@ -130,6 +213,26 @@ struct GlobalStats {
     kTcpReadOfferIovSize,
     kHttp2SendMessageSize,
     kHttp2MetadataSize,
+    kWrrSubchannelListSize,
+    kWrrSubchannelReadySize,
+    kWorkSerializerRunTimeMs,
+    kWorkSerializerWorkTimeMs,
+    kWorkSerializerWorkTimePerItemMs,
+    kWorkSerializerItemsPerRun,
+    kChaoticGoodSendmsgsPerWriteControl,
+    kChaoticGoodRecvmsgsPerReadControl,
+    kChaoticGoodSendmsgsPerWriteData,
+    kChaoticGoodRecvmsgsPerReadData,
+    kChaoticGoodThreadHopsPerWriteControl,
+    kChaoticGoodThreadHopsPerReadControl,
+    kChaoticGoodThreadHopsPerWriteData,
+    kChaoticGoodThreadHopsPerReadData,
+    kChaoticGoodTcpReadSizeData,
+    kChaoticGoodTcpReadSizeControl,
+    kChaoticGoodTcpReadOfferData,
+    kChaoticGoodTcpReadOfferControl,
+    kChaoticGoodTcpWriteSizeData,
+    kChaoticGoodTcpWriteSizeControl,
     COUNT
   };
   GlobalStats();
@@ -159,6 +262,20 @@ struct GlobalStats {
       uint64_t cq_pluck_creates;
       uint64_t cq_next_creates;
       uint64_t cq_callback_creates;
+      uint64_t wrr_updates;
+      uint64_t work_serializer_items_enqueued;
+      uint64_t work_serializer_items_dequeued;
+      uint64_t econnaborted_count;
+      uint64_t econnreset_count;
+      uint64_t epipe_count;
+      uint64_t etimedout_count;
+      uint64_t econnrefused_count;
+      uint64_t enetunreach_count;
+      uint64_t enomsg_count;
+      uint64_t enotconn_count;
+      uint64_t enobufs_count;
+      uint64_t uncommon_io_error_count;
+      uint64_t msg_errqueue_error_count;
     };
     uint64_t counters[static_cast<int>(Counter::COUNT)];
   };
@@ -170,6 +287,26 @@ struct GlobalStats {
   Histogram_80_10 tcp_read_offer_iov_size;
   Histogram_16777216_20 http2_send_message_size;
   Histogram_65536_26 http2_metadata_size;
+  Histogram_10000_20 wrr_subchannel_list_size;
+  Histogram_10000_20 wrr_subchannel_ready_size;
+  Histogram_100000_20 work_serializer_run_time_ms;
+  Histogram_100000_20 work_serializer_work_time_ms;
+  Histogram_100000_20 work_serializer_work_time_per_item_ms;
+  Histogram_10000_20 work_serializer_items_per_run;
+  Histogram_100_20 chaotic_good_sendmsgs_per_write_control;
+  Histogram_100_20 chaotic_good_recvmsgs_per_read_control;
+  Histogram_100_20 chaotic_good_sendmsgs_per_write_data;
+  Histogram_100_20 chaotic_good_recvmsgs_per_read_data;
+  Histogram_100_20 chaotic_good_thread_hops_per_write_control;
+  Histogram_100_20 chaotic_good_thread_hops_per_read_control;
+  Histogram_100_20 chaotic_good_thread_hops_per_write_data;
+  Histogram_100_20 chaotic_good_thread_hops_per_read_data;
+  Histogram_16777216_20 chaotic_good_tcp_read_size_data;
+  Histogram_16777216_20 chaotic_good_tcp_read_size_control;
+  Histogram_16777216_20 chaotic_good_tcp_read_offer_data;
+  Histogram_16777216_20 chaotic_good_tcp_read_offer_control;
+  Histogram_16777216_20 chaotic_good_tcp_write_size_data;
+  Histogram_16777216_20 chaotic_good_tcp_write_size_control;
   HistogramView histogram(Histogram which) const;
   std::unique_ptr<GlobalStats> Diff(const GlobalStats& other) const;
 };
@@ -240,6 +377,52 @@ class GlobalStatsCollector {
     data_.this_cpu().cq_callback_creates.fetch_add(1,
                                                    std::memory_order_relaxed);
   }
+  void IncrementWrrUpdates() {
+    data_.this_cpu().wrr_updates.fetch_add(1, std::memory_order_relaxed);
+  }
+  void IncrementWorkSerializerItemsEnqueued() {
+    data_.this_cpu().work_serializer_items_enqueued.fetch_add(
+        1, std::memory_order_relaxed);
+  }
+  void IncrementWorkSerializerItemsDequeued() {
+    data_.this_cpu().work_serializer_items_dequeued.fetch_add(
+        1, std::memory_order_relaxed);
+  }
+  void IncrementEconnabortedCount() {
+    data_.this_cpu().econnaborted_count.fetch_add(1, std::memory_order_relaxed);
+  }
+  void IncrementEconnresetCount() {
+    data_.this_cpu().econnreset_count.fetch_add(1, std::memory_order_relaxed);
+  }
+  void IncrementEpipeCount() {
+    data_.this_cpu().epipe_count.fetch_add(1, std::memory_order_relaxed);
+  }
+  void IncrementEtimedoutCount() {
+    data_.this_cpu().etimedout_count.fetch_add(1, std::memory_order_relaxed);
+  }
+  void IncrementEconnrefusedCount() {
+    data_.this_cpu().econnrefused_count.fetch_add(1, std::memory_order_relaxed);
+  }
+  void IncrementEnetunreachCount() {
+    data_.this_cpu().enetunreach_count.fetch_add(1, std::memory_order_relaxed);
+  }
+  void IncrementEnomsgCount() {
+    data_.this_cpu().enomsg_count.fetch_add(1, std::memory_order_relaxed);
+  }
+  void IncrementEnotconnCount() {
+    data_.this_cpu().enotconn_count.fetch_add(1, std::memory_order_relaxed);
+  }
+  void IncrementEnobufsCount() {
+    data_.this_cpu().enobufs_count.fetch_add(1, std::memory_order_relaxed);
+  }
+  void IncrementUncommonIoErrorCount() {
+    data_.this_cpu().uncommon_io_error_count.fetch_add(
+        1, std::memory_order_relaxed);
+  }
+  void IncrementMsgErrqueueErrorCount() {
+    data_.this_cpu().msg_errqueue_error_count.fetch_add(
+        1, std::memory_order_relaxed);
+  }
   void IncrementCallInitialSize(int value) {
     data_.this_cpu().call_initial_size.Increment(value);
   }
@@ -264,6 +447,67 @@ class GlobalStatsCollector {
   void IncrementHttp2MetadataSize(int value) {
     data_.this_cpu().http2_metadata_size.Increment(value);
   }
+  void IncrementWrrSubchannelListSize(int value) {
+    data_.this_cpu().wrr_subchannel_list_size.Increment(value);
+  }
+  void IncrementWrrSubchannelReadySize(int value) {
+    data_.this_cpu().wrr_subchannel_ready_size.Increment(value);
+  }
+  void IncrementWorkSerializerRunTimeMs(int value) {
+    data_.this_cpu().work_serializer_run_time_ms.Increment(value);
+  }
+  void IncrementWorkSerializerWorkTimeMs(int value) {
+    data_.this_cpu().work_serializer_work_time_ms.Increment(value);
+  }
+  void IncrementWorkSerializerWorkTimePerItemMs(int value) {
+    data_.this_cpu().work_serializer_work_time_per_item_ms.Increment(value);
+  }
+  void IncrementWorkSerializerItemsPerRun(int value) {
+    data_.this_cpu().work_serializer_items_per_run.Increment(value);
+  }
+  void IncrementChaoticGoodSendmsgsPerWriteControl(int value) {
+    data_.this_cpu().chaotic_good_sendmsgs_per_write_control.Increment(value);
+  }
+  void IncrementChaoticGoodRecvmsgsPerReadControl(int value) {
+    data_.this_cpu().chaotic_good_recvmsgs_per_read_control.Increment(value);
+  }
+  void IncrementChaoticGoodSendmsgsPerWriteData(int value) {
+    data_.this_cpu().chaotic_good_sendmsgs_per_write_data.Increment(value);
+  }
+  void IncrementChaoticGoodRecvmsgsPerReadData(int value) {
+    data_.this_cpu().chaotic_good_recvmsgs_per_read_data.Increment(value);
+  }
+  void IncrementChaoticGoodThreadHopsPerWriteControl(int value) {
+    data_.this_cpu().chaotic_good_thread_hops_per_write_control.Increment(
+        value);
+  }
+  void IncrementChaoticGoodThreadHopsPerReadControl(int value) {
+    data_.this_cpu().chaotic_good_thread_hops_per_read_control.Increment(value);
+  }
+  void IncrementChaoticGoodThreadHopsPerWriteData(int value) {
+    data_.this_cpu().chaotic_good_thread_hops_per_write_data.Increment(value);
+  }
+  void IncrementChaoticGoodThreadHopsPerReadData(int value) {
+    data_.this_cpu().chaotic_good_thread_hops_per_read_data.Increment(value);
+  }
+  void IncrementChaoticGoodTcpReadSizeData(int value) {
+    data_.this_cpu().chaotic_good_tcp_read_size_data.Increment(value);
+  }
+  void IncrementChaoticGoodTcpReadSizeControl(int value) {
+    data_.this_cpu().chaotic_good_tcp_read_size_control.Increment(value);
+  }
+  void IncrementChaoticGoodTcpReadOfferData(int value) {
+    data_.this_cpu().chaotic_good_tcp_read_offer_data.Increment(value);
+  }
+  void IncrementChaoticGoodTcpReadOfferControl(int value) {
+    data_.this_cpu().chaotic_good_tcp_read_offer_control.Increment(value);
+  }
+  void IncrementChaoticGoodTcpWriteSizeData(int value) {
+    data_.this_cpu().chaotic_good_tcp_write_size_data.Increment(value);
+  }
+  void IncrementChaoticGoodTcpWriteSizeControl(int value) {
+    data_.this_cpu().chaotic_good_tcp_write_size_control.Increment(value);
+  }
 
  private:
   struct Data {
@@ -285,6 +529,20 @@ class GlobalStatsCollector {
     std::atomic<uint64_t> cq_pluck_creates{0};
     std::atomic<uint64_t> cq_next_creates{0};
     std::atomic<uint64_t> cq_callback_creates{0};
+    std::atomic<uint64_t> wrr_updates{0};
+    std::atomic<uint64_t> work_serializer_items_enqueued{0};
+    std::atomic<uint64_t> work_serializer_items_dequeued{0};
+    std::atomic<uint64_t> econnaborted_count{0};
+    std::atomic<uint64_t> econnreset_count{0};
+    std::atomic<uint64_t> epipe_count{0};
+    std::atomic<uint64_t> etimedout_count{0};
+    std::atomic<uint64_t> econnrefused_count{0};
+    std::atomic<uint64_t> enetunreach_count{0};
+    std::atomic<uint64_t> enomsg_count{0};
+    std::atomic<uint64_t> enotconn_count{0};
+    std::atomic<uint64_t> enobufs_count{0};
+    std::atomic<uint64_t> uncommon_io_error_count{0};
+    std::atomic<uint64_t> msg_errqueue_error_count{0};
     HistogramCollector_65536_26 call_initial_size;
     HistogramCollector_16777216_20 tcp_write_size;
     HistogramCollector_80_10 tcp_write_iov_size;
@@ -293,6 +551,26 @@ class GlobalStatsCollector {
     HistogramCollector_80_10 tcp_read_offer_iov_size;
     HistogramCollector_16777216_20 http2_send_message_size;
     HistogramCollector_65536_26 http2_metadata_size;
+    HistogramCollector_10000_20 wrr_subchannel_list_size;
+    HistogramCollector_10000_20 wrr_subchannel_ready_size;
+    HistogramCollector_100000_20 work_serializer_run_time_ms;
+    HistogramCollector_100000_20 work_serializer_work_time_ms;
+    HistogramCollector_100000_20 work_serializer_work_time_per_item_ms;
+    HistogramCollector_10000_20 work_serializer_items_per_run;
+    HistogramCollector_100_20 chaotic_good_sendmsgs_per_write_control;
+    HistogramCollector_100_20 chaotic_good_recvmsgs_per_read_control;
+    HistogramCollector_100_20 chaotic_good_sendmsgs_per_write_data;
+    HistogramCollector_100_20 chaotic_good_recvmsgs_per_read_data;
+    HistogramCollector_100_20 chaotic_good_thread_hops_per_write_control;
+    HistogramCollector_100_20 chaotic_good_thread_hops_per_read_control;
+    HistogramCollector_100_20 chaotic_good_thread_hops_per_write_data;
+    HistogramCollector_100_20 chaotic_good_thread_hops_per_read_data;
+    HistogramCollector_16777216_20 chaotic_good_tcp_read_size_data;
+    HistogramCollector_16777216_20 chaotic_good_tcp_read_size_control;
+    HistogramCollector_16777216_20 chaotic_good_tcp_read_offer_data;
+    HistogramCollector_16777216_20 chaotic_good_tcp_read_offer_control;
+    HistogramCollector_16777216_20 chaotic_good_tcp_write_size_data;
+    HistogramCollector_16777216_20 chaotic_good_tcp_write_size_control;
   };
   PerCpu<Data> data_{PerCpuOptions().SetCpusPerShard(4).SetMaxShards(32)};
 };

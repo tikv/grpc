@@ -22,6 +22,7 @@
 #include <thread>
 
 #include "absl/flags/flag.h"
+#include "absl/log/check.h"
 
 #include <grpc/grpc.h>
 #include <grpc/support/log.h>
@@ -75,8 +76,8 @@ const char kEchoUserAgentKey[] = "x-grpc-test-echo-useragent";
 
 void MaybeEchoMetadata(ServerContext* context) {
   const auto& client_metadata = context->client_metadata();
-  GPR_ASSERT(client_metadata.count(kEchoInitialMetadataKey) <= 1);
-  GPR_ASSERT(client_metadata.count(kEchoTrailingBinMetadataKey) <= 1);
+  CHECK_LE(client_metadata.count(kEchoInitialMetadataKey), 1u);
+  CHECK_LE(client_metadata.count(kEchoTrailingBinMetadataKey), 1u);
 
   auto iter = client_metadata.find(kEchoInitialMetadataKey);
   if (iter != client_metadata.end()) {
@@ -296,6 +297,7 @@ class TestServiceImpl : public TestService::Service {
     StreamingOutputCallRequest request;
     StreamingOutputCallResponse response;
     bool write_success = true;
+    std::unique_ptr<grpc_core::MutexLock> orca_oob_lock;
     while (write_success && stream->Read(&request)) {
       if (request.has_response_status()) {
         return Status(
@@ -317,6 +319,15 @@ class TestServiceImpl : public TestService::Service {
         write_success = stream->Write(response);
       }
       if (request.has_orca_oob_report()) {
+        if (orca_oob_lock == nullptr) {
+          orca_oob_lock =
+              std::make_unique<grpc_core::MutexLock>(&orca_oob_server_mu_);
+          server_metric_recorder_->ClearCpuUtilization();
+          server_metric_recorder_->ClearEps();
+          server_metric_recorder_->ClearMemoryUtilization();
+          server_metric_recorder_->SetAllNamedUtilization({});
+          server_metric_recorder_->ClearQps();
+        }
         RecordServerMetrics(request.orca_oob_report());
       }
     }
@@ -381,6 +392,8 @@ class TestServiceImpl : public TestService::Service {
   std::set<std::string> retained_utilization_names_
       ABSL_GUARDED_BY(retained_utilization_names_mu_);
   grpc_core::Mutex retained_utilization_names_mu_;
+  // Only a single client requesting Orca OOB reports is allowed at a time
+  grpc_core::Mutex orca_oob_server_mu_;
 };
 
 void grpc::testing::interop::RunServer(
@@ -407,7 +420,7 @@ void grpc::testing::interop::RunServer(
     ServerStartedCondition* server_started_condition,
     std::unique_ptr<std::vector<std::unique_ptr<ServerBuilderOption>>>
         server_options) {
-  GPR_ASSERT(port != 0);
+  CHECK_NE(port, 0);
   std::ostringstream server_address;
   server_address << "0.0.0.0:" << port;
   auto server_metric_recorder =

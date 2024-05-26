@@ -15,8 +15,6 @@
 #ifndef GRPC_SRC_CORE_LIB_EVENT_ENGINE_THREADY_EVENT_ENGINE_THREADY_EVENT_ENGINE_H
 #define GRPC_SRC_CORE_LIB_EVENT_ENGINE_THREADY_EVENT_ENGINE_THREADY_EVENT_ENGINE_H
 
-#include <grpc/support/port_platform.h>
-
 #include <memory>
 #include <utility>
 
@@ -28,6 +26,7 @@
 #include <grpc/event_engine/endpoint_config.h>
 #include <grpc/event_engine/event_engine.h>
 #include <grpc/event_engine/memory_allocator.h>
+#include <grpc/support/port_platform.h>
 
 namespace grpc_event_engine {
 namespace experimental {
@@ -63,7 +62,7 @@ class ThreadyEventEngine final : public EventEngine {
 
   bool IsWorkerThread() override;
 
-  std::unique_ptr<DNSResolver> GetDNSResolver(
+  absl::StatusOr<std::unique_ptr<DNSResolver>> GetDNSResolver(
       const DNSResolver::ResolverOptions& options) override;
 
   void Run(Closure* closure) override;
@@ -80,17 +79,13 @@ class ThreadyEventEngine final : public EventEngine {
    public:
     explicit ThreadyDNSResolver(std::unique_ptr<DNSResolver> impl)
         : impl_(std::move(impl)) {}
-    LookupTaskHandle LookupHostname(LookupHostnameCallback on_resolve,
-                                    absl::string_view name,
-                                    absl::string_view default_port,
-                                    Duration timeout) override;
-    LookupTaskHandle LookupSRV(LookupSRVCallback on_resolve,
-                               absl::string_view name,
-                               Duration timeout) override;
-    LookupTaskHandle LookupTXT(LookupTXTCallback on_resolve,
-                               absl::string_view name,
-                               Duration timeout) override;
-    bool CancelLookup(LookupTaskHandle handle) override;
+    void LookupHostname(LookupHostnameCallback on_resolve,
+                        absl::string_view name,
+                        absl::string_view default_port) override;
+    void LookupSRV(LookupSRVCallback on_resolve,
+                   absl::string_view name) override;
+    void LookupTXT(LookupTXTCallback on_resolve,
+                   absl::string_view name) override;
 
    private:
     std::unique_ptr<DNSResolver> impl_;

@@ -23,11 +23,12 @@
 #include <string.h>
 
 #include <algorithm>
-#include <initializer_list>
+#include <limits>
 #include <string>
 #include <utility>
 #include <vector>
 
+#include "absl/log/check.h"
 #include "absl/strings/escaping.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
@@ -48,7 +49,7 @@
 #include "src/core/lib/gprpp/debug_location.h"
 #include "src/core/lib/gprpp/match.h"
 #include "src/core/lib/surface/event_string.h"
-#include "test/core/util/test_config.h"
+#include "test/core/test_util/test_config.h"
 
 // a set of metadata we expect to find on an event
 typedef struct metadata {
@@ -163,9 +164,9 @@ int byte_buffer_eq_slice(grpc_byte_buffer* bb, grpc_slice b) {
   if (bb->data.raw.compression > GRPC_COMPRESS_NONE) {
     grpc_slice_buffer decompressed_buffer;
     grpc_slice_buffer_init(&decompressed_buffer);
-    GPR_ASSERT(grpc_msg_decompress(bb->data.raw.compression,
-                                   &bb->data.raw.slice_buffer,
-                                   &decompressed_buffer));
+    CHECK(grpc_msg_decompress(bb->data.raw.compression,
+                              &bb->data.raw.slice_buffer,
+                              &decompressed_buffer));
     grpc_byte_buffer* rbb = grpc_raw_byte_buffer_create(
         decompressed_buffer.slices, decompressed_buffer.count);
     int ret_val = raw_byte_buffer_eq_slice(rbb, b);
@@ -182,7 +183,9 @@ int byte_buffer_eq_string(grpc_byte_buffer* bb, const char* str) {
 
 namespace {
 bool IsProbablyInteger(void* p) {
-  return reinterpret_cast<uintptr_t>(p) < 1000000;
+  return reinterpret_cast<uintptr_t>(p) < 1000000 ||
+         (reinterpret_cast<uintptr_t>(p) >
+          std::numeric_limits<uintptr_t>::max() - 10);
 }
 
 std::string TagStr(void* tag) {
@@ -224,6 +227,21 @@ std::string CqVerifier::Expectation::ToString() const {
           }));
 }
 
+std::string CqVerifier::Expectation::ToShortString() const {
+  return absl::StrCat(
+      TagStr(tag),
+      Match(
+          result,
+          [](bool success) -> std::string {
+            if (!success) return "-❌";
+            return "-✅";
+          },
+          [](Maybe) { return std::string("-❓"); },
+          [](AnyStatus) { return std::string("-🤷"); },
+          [](const PerformAction&) { return std::string("-🎬"); },
+          [](const MaybePerformAction&) { return std::string("-🎬❓"); }));
+}
+
 std::vector<std::string> CqVerifier::ToStrings() const {
   std::vector<std::string> expectations;
   expectations.reserve(expectations_.size());
@@ -237,21 +255,68 @@ std::string CqVerifier::ToString() const {
   return absl::StrJoin(ToStrings(), "\n");
 }
 
+std::vector<std::string> CqVerifier::ToShortStrings() const {
+  std::vector<std::string> expectations;
+  expectations.reserve(expectations_.size());
+  for (const auto& e : expectations_) {
+    expectations.push_back(e.ToShortString());
+  }
+  return expectations;
+}
+
+std::string CqVerifier::ToShortString() const {
+  return absl::StrJoin(ToShortStrings(), " ");
+}
+
 void CqVerifier::FailNoEventReceived(const SourceLocation& location) const {
-  fail_(Failure{location, "No event received", ToStrings()});
+  fail_(Failure{location, "No event received", ToStrings(), {}});
 }
 
 void CqVerifier::FailUnexpectedEvent(grpc_event* ev,
                                      const SourceLocation& location) const {
+  std::vector<std::string> message_details;
+  if (ev->type == GRPC_OP_COMPLETE && ev->success) {
+    auto successful_state_strings = successful_state_strings_.find(ev->tag);
+    if (successful_state_strings != successful_state_strings_.end()) {
+      for (SuccessfulStateString* sss : successful_state_strings->second) {
+        message_details.push_back(sss->GetSuccessfulStateString());
+      }
+    }
+  }
   fail_(Failure{location,
                 absl::StrCat("Unexpected event: ", grpc_event_string(ev)),
-                ToStrings()});
+                ToStrings(), std::move(message_details)});
+}
+
+namespace {
+std::string CrashMessage(const CqVerifier::Failure& failure) {
+  std::string message = failure.message;
+  if (!failure.message_details.empty()) {
+    absl::StrAppend(&message, "\nwith:");
+    for (const auto& detail : failure.message_details) {
+      absl::StrAppend(&message, "\n  ", detail);
+    }
+  }
+  absl::StrAppend(&message, "\nchecked @ ", failure.location.file(), ":",
+                  failure.location.line());
+  if (!failure.expected.empty()) {
+    absl::StrAppend(&message, "\nexpected:\n");
+    for (const auto& line : failure.expected) {
+      absl::StrAppend(&message, "  ", line, "\n");
+    }
+  } else {
+    absl::StrAppend(&message, "\nexpected nothing");
+  }
+  return message;
+}
+}  // namespace
+
+void CqVerifier::FailUsingGprCrashWithStdio(const Failure& failure) {
+  CrashWithStdio(CrashMessage(failure));
 }
 
 void CqVerifier::FailUsingGprCrash(const Failure& failure) {
-  Crash(absl::StrCat("[", failure.location.file(), ":", failure.location.line(),
-                     "] ", failure.message, "\nexpected:\n",
-                     absl::StrJoin(failure.expected, "\n")));
+  Crash(CrashMessage(failure));
 }
 
 void CqVerifier::FailUsingGtestFail(const Failure& failure) {
@@ -293,9 +358,17 @@ grpc_event CqVerifier::Step(gpr_timespec deadline) {
 }
 
 void CqVerifier::Verify(Duration timeout, SourceLocation location) {
+  if (expectations_.empty()) return;
+  bool must_log = true;
   const gpr_timespec deadline =
       grpc_timeout_milliseconds_to_deadline(timeout.millis());
   while (!expectations_.empty()) {
+    must_log = std::exchange(added_expectations_, false) || must_log;
+    if (log_verifications_ && must_log) {
+      gpr_log(GPR_ERROR, "Verify %s for %s", ToShortString().c_str(),
+              timeout.ToString().c_str());
+    }
+    must_log = false;
     grpc_event ev = Step(deadline);
     if (ev.type == GRPC_QUEUE_TIMEOUT) break;
     if (ev.type != GRPC_OP_COMPLETE) {
@@ -349,9 +422,13 @@ bool CqVerifier::AllMaybes() const {
 }
 
 void CqVerifier::VerifyEmpty(Duration timeout, SourceLocation location) {
+  if (log_verifications_) {
+    gpr_log(GPR_ERROR, "Verify empty completion queue for %s",
+            timeout.ToString().c_str());
+  }
   const gpr_timespec deadline =
       gpr_time_add(gpr_now(GPR_CLOCK_MONOTONIC), timeout.as_timespec());
-  GPR_ASSERT(expectations_.empty());
+  CHECK(expectations_.empty());
   grpc_event ev = Step(deadline);
   if (ev.type != GRPC_QUEUE_TIMEOUT) {
     FailUnexpectedEvent(&ev, location);
@@ -360,7 +437,17 @@ void CqVerifier::VerifyEmpty(Duration timeout, SourceLocation location) {
 
 void CqVerifier::Expect(void* tag, ExpectedResult result,
                         SourceLocation location) {
+  added_expectations_ = true;
   expectations_.push_back(Expectation{location, tag, std::move(result)});
+}
+
+void CqVerifier::AddSuccessfulStateString(
+    void* tag, SuccessfulStateString* successful_state_string) {
+  successful_state_strings_[tag].push_back(successful_state_string);
+}
+
+void CqVerifier::ClearSuccessfulStateStrings(void* tag) {
+  successful_state_strings_.erase(tag);
 }
 
 }  // namespace grpc_core

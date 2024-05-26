@@ -169,10 +169,13 @@ module GRPC
       batch_result = @call.run_batch(ops)
       unless @metadata_received
         @call.metadata = batch_result.metadata
-        @metadata_received = true
       end
       set_input_stream_done
       attach_status_results_and_complete_call(batch_result)
+    ensure
+      # Ensure we don't attempt to request the initial metadata again
+      # in case an exception occurs.
+      @metadata_received = true
     end
 
     def attach_status_results_and_complete_call(recv_status_batch_result)
@@ -232,16 +235,15 @@ module GRPC
     def server_unary_response(req, trailing_metadata: {},
                               code: Core::StatusCodes::OK, details: 'OK')
       ops = {}
+      ops[SEND_MESSAGE] = @marshal.call(req)
+      ops[SEND_STATUS_FROM_SERVER] = Struct::Status.new(
+        code, details, trailing_metadata)
+      ops[RECV_CLOSE_ON_SERVER] = nil
+
       @send_initial_md_mutex.synchronize do
         ops[SEND_INITIAL_METADATA] = @metadata_to_send unless @metadata_sent
         @metadata_sent = true
       end
-
-      payload = @marshal.call(req)
-      ops[SEND_MESSAGE] = payload
-      ops[SEND_STATUS_FROM_SERVER] = Struct::Status.new(
-        code, details, trailing_metadata)
-      ops[RECV_CLOSE_ON_SERVER] = nil
 
       @call.run_batch(ops)
       set_output_stream_done
@@ -259,9 +261,15 @@ module GRPC
       batch_result = @call.run_batch(ops)
       unless @metadata_received
         @call.metadata = batch_result.metadata
-        @metadata_received = true
       end
       get_message_from_batch_result(batch_result)
+    rescue GRPC::Core::CallError => e
+      GRPC.logger.info("remote_read: #{e}")
+      nil
+    ensure
+      # Ensure we don't attempt to request the initial metadata again
+      # in case an exception occurs.
+      @metadata_received = true
     end
 
     def get_message_from_batch_result(recv_message_batch_result)
@@ -328,14 +336,7 @@ module GRPC
     def each_remote_read_then_finish
       return enum_for(:each_remote_read_then_finish) unless block_given?
       loop do
-        resp =
-          begin
-            remote_read
-          rescue GRPC::Core::CallError => e
-            GRPC.logger.warn("In each_remote_read_then_finish: #{e}")
-            nil
-          end
-
+        resp = remote_read
         break if resp.nil?  # the last response was received
         yield resp
       end

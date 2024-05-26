@@ -15,14 +15,13 @@
 #ifndef GRPC_SRC_CORE_LIB_PROMISE_PROMISE_H
 #define GRPC_SRC_CORE_LIB_PROMISE_PROMISE_H
 
-#include <grpc/support/port_platform.h>
-
 #include <type_traits>
-#include <utility>
 
 #include "absl/functional/any_invocable.h"
 #include "absl/status/status.h"
 #include "absl/types/optional.h"
+
+#include <grpc/support/port_platform.h>
 
 #include "src/core/lib/promise/detail/promise_like.h"
 #include "src/core/lib/promise/poll.h"
@@ -89,6 +88,10 @@ auto WithResult(F f) ->
                             F>::type {
   return f;
 }
+
+template <typename Promise>
+using PromiseResult = typename PollTraits<
+    typename promise_detail::PromiseLike<Promise>::Result>::Type;
 
 }  // namespace grpc_core
 

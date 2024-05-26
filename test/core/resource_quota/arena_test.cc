@@ -38,7 +38,7 @@
 #include "src/core/lib/gprpp/thd.h"
 #include "src/core/lib/iomgr/exec_ctx.h"
 #include "src/core/lib/resource_quota/resource_quota.h"
-#include "test/core/util/test_config.h"
+#include "test/core/test_util/test_config.h"
 
 namespace grpc_core {
 
@@ -191,6 +191,7 @@ bool IsScribbled(Int* ints, int n, int offset) {
   return true;
 }
 
+#ifndef GRPC_ARENA_POOLED_ALLOCATIONS_USE_MALLOC
 TEST_F(ArenaTest, PooledObjectsArePooled) {
   struct TestObj {
     char a[100];
@@ -208,6 +209,7 @@ TEST_F(ArenaTest, PooledObjectsArePooled) {
   Scribble(obj->a, 100, 2);
   EXPECT_TRUE(IsScribbled(obj->a, 100, 2));
 }
+#endif
 
 TEST_F(ArenaTest, CreateManyObjects) {
   struct TestObj {
@@ -238,7 +240,11 @@ TEST_F(ArenaTest, CreateManyObjectsWithDestructors) {
 TEST_F(ArenaTest, CreatePoolArray) {
   auto arena = MakeScopedArena(1024, &memory_allocator_);
   auto p = arena->MakePooledArray<int>(1024);
+#ifndef GRPC_ARENA_POOLED_ALLOCATIONS_USE_MALLOC
   EXPECT_FALSE(p.get_deleter().has_freelist());
+#else
+  EXPECT_TRUE(p.get_deleter().has_freelist());
+#endif
   p = arena->MakePooledArray<int>(5);
   EXPECT_TRUE(p.get_deleter().has_freelist());
   Scribble(p.get(), 5, 1);

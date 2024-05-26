@@ -25,33 +25,29 @@
 #ifndef GRPC_SRC_CORE_LIB_RESOURCE_QUOTA_ARENA_H
 #define GRPC_SRC_CORE_LIB_RESOURCE_QUOTA_ARENA_H
 
-#include <grpc/support/port_platform.h>
-
 #include <stddef.h>
 
 #include <atomic>
-#include <limits>
+#include <iosfwd>
 #include <memory>
-#include <new>
 #include <utility>
 
-#include "absl/meta/type_traits.h"
-#include "absl/utility/utility.h"
-
 #include <grpc/event_engine/memory_allocator.h>
+#include <grpc/support/port_platform.h>
 
 #include "src/core/lib/gpr/alloc.h"
 #include "src/core/lib/gprpp/construct_destruct.h"
 #include "src/core/lib/promise/context.h"
 #include "src/core/lib/resource_quota/memory_quota.h"
 
-// #define GRPC_ARENA_POOLED_ALLOCATIONS_USE_MALLOC
+#define GRPC_ARENA_POOLED_ALLOCATIONS_USE_MALLOC
 // #define GRPC_ARENA_TRACE_POOLED_ALLOCATIONS
 
 namespace grpc_core {
 
 namespace arena_detail {
 
+#ifndef GRPC_ARENA_POOLED_ALLOCATIONS_USE_MALLOC
 struct PoolAndSize {
   size_t alloc_size;
   size_t pool_index;
@@ -113,16 +109,29 @@ PoolAndSize ChoosePoolForAllocationSize(
     size_t n, absl::integer_sequence<size_t, kBucketSizes...>) {
   return ChoosePoolForAllocationSizeImpl<0, kBucketSizes...>::Fn(n);
 }
+#else
+template <typename T, typename A, typename B>
+struct IfArray {
+  using Result = A;
+};
+
+template <typename T, typename A, typename B>
+struct IfArray<T[], A, B> {
+  using Result = B;
+};
+#endif
 
 }  // namespace arena_detail
 
 class Arena {
+#ifndef GRPC_ARENA_POOLED_ALLOCATIONS_USE_MALLOC
   // Selected pool sizes.
   // How to tune: see tools/codegen/core/optimize_arena_pool_sizes.py
   using PoolSizes = absl::integer_sequence<size_t, 80, 304, 528, 1024>;
   struct FreePoolNode {
     FreePoolNode* next;
   };
+#endif
 
  public:
   // Create an arena, with \a initial_size bytes in the first allocated buffer.
@@ -163,6 +172,8 @@ class Arena {
     }
   }
 
+  // Allocates T from the arena.
+  // The caller is responsible for calling p->~T(), but should NOT delete.
   // TODO(roth): We currently assume that all callers need alignment of 16
   // bytes, which may be wrong in some cases. When we have time, we should
   // change this to instead use the alignment of the type being allocated by
@@ -170,11 +181,12 @@ class Arena {
   template <typename T, typename... Args>
   T* New(Args&&... args) {
     T* t = static_cast<T*>(Alloc(sizeof(T)));
-    Construct(t, std::forward<Args>(args)...);
+    new (t) T(std::forward<Args>(args)...);
     return t;
   }
 
   // Like New, but has the arena call p->~T() at arena destruction time.
+  // The caller should NOT delete.
   template <typename T, typename... Args>
   T* ManagedNew(Args&&... args) {
     auto* p = New<ManagedNewImpl<T>>(std::forward<Args>(args)...);
@@ -291,8 +303,30 @@ class Arena {
     bool delete_ = true;
   };
 
+  class ArrayPooledDeleter {
+   public:
+    ArrayPooledDeleter() = default;
+    explicit ArrayPooledDeleter(std::nullptr_t) : delete_(false) {}
+    template <typename T>
+    void operator()(T* p) {
+      // TODO(ctiller): promise based filter hijacks ownership of some pointers
+      // to make them appear as PoolPtr without really transferring ownership,
+      // by setting the arena to nullptr.
+      // This is a transitional hack and should be removed once promise based
+      // filter is removed.
+      if (delete_) delete[] p;
+    }
+
+    bool has_freelist() const { return delete_; }
+
+   private:
+    bool delete_ = true;
+  };
+
   template <typename T>
-  using PoolPtr = std::unique_ptr<T, PooledDeleter>;
+  using PoolPtr =
+      std::unique_ptr<T, typename arena_detail::IfArray<
+                             T, PooledDeleter, ArrayPooledDeleter>::Result>;
 
   // Make a unique_ptr to T that is allocated from the arena.
   // When the pointer is released, the memory may be reused for other
@@ -301,7 +335,7 @@ class Arena {
   //          value in Arena::PoolSizes, and so this may pessimize total
   //          arena size.
   template <typename T, typename... Args>
-  PoolPtr<T> MakePooled(Args&&... args) {
+  static PoolPtr<T> MakePooled(Args&&... args) {
     return PoolPtr<T>(new T(std::forward<Args>(args)...), PooledDeleter());
   }
 
@@ -314,7 +348,7 @@ class Arena {
   //          arena size.
   template <typename T>
   PoolPtr<T[]> MakePooledArray(size_t n) {
-    return PoolPtr<T[]>(new T[n], PooledDeleter());
+    return PoolPtr<T[]>(new T[n], ArrayPooledDeleter());
   }
 
   // Like MakePooled, but with manual memory management.
@@ -372,9 +406,11 @@ class Arena {
 
   void* AllocZone(size_t size);
 
+#ifndef GRPC_ARENA_POOLED_ALLOCATIONS_USE_MALLOC
   void* AllocPooled(size_t obj_size, size_t alloc_size,
                     std::atomic<FreePoolNode*>* head);
   static void FreePooled(void* p, std::atomic<FreePoolNode*>* head);
+#endif
 
   void TracePoolAlloc(size_t size, void* ptr) {
     (void)size;

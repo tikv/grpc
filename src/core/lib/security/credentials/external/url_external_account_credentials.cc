@@ -13,16 +13,14 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 //
-#include <grpc/support/port_platform.h>
-
 #include "src/core/lib/security/credentials/external/url_external_account_credentials.h"
 
 #include <string.h>
 
-#include <initializer_list>
 #include <memory>
 #include <utility>
 
+#include "absl/log/check.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
@@ -30,11 +28,13 @@
 #include "absl/strings/str_split.h"
 #include "absl/strings/string_view.h"
 
+#include <grpc/credentials.h>
 #include <grpc/grpc.h>
 #include <grpc/grpc_security.h>
 #include <grpc/support/alloc.h>
 #include <grpc/support/json.h>
 #include <grpc/support/log.h>
+#include <grpc/support/port_platform.h>
 #include <grpc/support/string_util.h>
 
 #include "src/core/lib/http/httpcli_ssl_credentials.h"
@@ -168,14 +168,13 @@ void UrlExternalAccountCredentials::RetrieveSubjectToken(
   grpc_http_response_destroy(&ctx_->response);
   ctx_->response = {};
   GRPC_CLOSURE_INIT(&ctx_->closure, OnRetrieveSubjectToken, this, nullptr);
-  GPR_ASSERT(http_request_ == nullptr);
+  CHECK(http_request_ == nullptr);
   RefCountedPtr<grpc_channel_credentials> http_request_creds;
   if (url_.scheme() == "http") {
     http_request_creds = RefCountedPtr<grpc_channel_credentials>(
         grpc_insecure_credentials_create());
   } else {
-    http_request_creds = RefCountedPtr<grpc_channel_credentials>(
-        CreateHttpRequestSSLCredentials());
+    http_request_creds = CreateHttpRequestSSLCredentials();
   }
   http_request_ =
       HttpRequest::Get(std::move(*url_for_request), nullptr /* channel args */,
@@ -240,6 +239,10 @@ void UrlExternalAccountCredentials::FinishRetrieveSubjectToken(
   } else {
     cb(subject_token, absl::OkStatus());
   }
+}
+
+absl::string_view UrlExternalAccountCredentials::CredentialSourceType() {
+  return "url";
 }
 
 }  // namespace grpc_core

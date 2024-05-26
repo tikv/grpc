@@ -16,17 +16,18 @@
 //
 //
 
-#include <grpc/support/port_platform.h>
-
 #include "src/core/lib/security/credentials/tls/tls_utils.h"
 
 #include <stddef.h>
+
+#include <algorithm>
 
 #include "absl/strings/ascii.h"
 #include "absl/strings/match.h"
 #include "absl/strings/str_cat.h"
 
 #include <grpc/support/log.h>
+#include <grpc/support/port_platform.h>
 
 namespace grpc_core {
 

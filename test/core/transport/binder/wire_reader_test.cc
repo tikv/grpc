@@ -28,11 +28,12 @@
 
 #include "absl/memory/memory.h"
 
+#include <grpc/grpc.h>
 #include <grpcpp/security/binder_security_policy.h>
 
 #include "src/core/ext/transport/binder/wire_format/wire_reader_impl.h"
+#include "test/core/test_util/test_config.h"
 #include "test/core/transport/binder/mock_objects.h"
-#include "test/core/util/test_config.h"
 
 namespace grpc_binder {
 
@@ -370,5 +371,8 @@ TEST_F(WireReaderTest, ServerInitialMetadata) {
 int main(int argc, char** argv) {
   ::testing::InitGoogleTest(&argc, argv);
   grpc::testing::TestEnvironment env(&argc, argv);
-  return RUN_ALL_TESTS();
+  grpc_init();
+  auto results = RUN_ALL_TESTS();
+  grpc_shutdown();
+  return results;
 }

@@ -16,20 +16,19 @@
 //
 //
 
-#include <grpc/support/port_platform.h>
-
 #include "src/core/lib/security/credentials/plugin/plugin_credentials.h"
 
 #include <atomic>
 #include <memory>
 
+#include "absl/log/check.h"
 #include "absl/status/status.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
 
-#include <grpc/slice.h>
 #include <grpc/support/alloc.h>
 #include <grpc/support/log.h>
+#include <grpc/support/port_platform.h>
 
 #include "src/core/lib/iomgr/error.h"
 #include "src/core/lib/iomgr/exec_ctx.h"
@@ -153,7 +152,8 @@ grpc_plugin_credentials::GetRequestMetadata(
 
   // Create pending_request object.
   auto request = grpc_core::MakeRefCounted<PendingRequest>(
-      Ref(), std::move(initial_metadata), args);
+      RefAsSubclass<grpc_plugin_credentials>(), std::move(initial_metadata),
+      args);
   // Invoke the plugin.  The callback holds a ref to us.
   if (GRPC_TRACE_FLAG_ENABLED(grpc_plugin_credentials_trace)) {
     gpr_log(GPR_INFO, "plugin_credentials[%p]: request %p: invoking plugin",
@@ -210,6 +210,6 @@ grpc_call_credentials* grpc_metadata_credentials_create_from_plugin(
     grpc_security_level min_security_level, void* reserved) {
   GRPC_API_TRACE("grpc_metadata_credentials_create_from_plugin(reserved=%p)", 1,
                  (reserved));
-  GPR_ASSERT(reserved == nullptr);
+  CHECK_EQ(reserved, nullptr);
   return new grpc_plugin_credentials(plugin, min_security_level);
 }

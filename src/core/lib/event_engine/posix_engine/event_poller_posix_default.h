@@ -15,6 +15,8 @@
 #ifndef GRPC_SRC_CORE_LIB_EVENT_ENGINE_POSIX_ENGINE_EVENT_POLLER_POSIX_DEFAULT_H
 #define GRPC_SRC_CORE_LIB_EVENT_ENGINE_POSIX_ENGINE_EVENT_POLLER_POSIX_DEFAULT_H
 
+#include <memory>
+
 #include <grpc/support/port_platform.h>
 
 namespace grpc_event_engine {
@@ -25,7 +27,7 @@ class Scheduler;
 
 // Return an instance of an event poller which is tied to the specified
 // scheduler.
-PosixEventPoller* MakeDefaultPoller(Scheduler* scheduler);
+std::shared_ptr<PosixEventPoller> MakeDefaultPoller(Scheduler* scheduler);
 
 }  // namespace experimental
 }  // namespace grpc_event_engine
