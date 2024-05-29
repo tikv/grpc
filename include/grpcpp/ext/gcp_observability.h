@@ -17,11 +17,10 @@
 #ifndef GRPCPP_EXT_GCP_OBSERVABILITY_H
 #define GRPCPP_EXT_GCP_OBSERVABILITY_H
 
-#include <grpc/support/port_platform.h>
-
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 
+#include <grpc/support/port_platform.h>
 #include <grpcpp/impl/grpc_library.h>
 
 namespace grpc {
@@ -67,7 +66,7 @@ class GcpObservability {
   // As an implementation detail, this properly initializes the OpenCensus stats
   // and tracing plugin, so applications do not need to perform any additional
   // gRPC C++ OpenCensus setup/registration to get GCP Observability for gRPC.
-  static absl::StatusOr<GcpObservability> Init() GRPC_MUST_USE_RESULT;
+  static absl::StatusOr<GcpObservability> Init();
 
   GcpObservability() = default;
   // Move constructor and Move-assignment operator.

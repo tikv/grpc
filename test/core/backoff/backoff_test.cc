@@ -19,6 +19,7 @@
 #include "src/core/lib/backoff/backoff.h"
 
 #include <algorithm>
+#include <memory>
 
 #include "gtest/gtest.h"
 
@@ -26,7 +27,7 @@
 
 #include "src/core/lib/gprpp/time.h"
 #include "src/core/lib/iomgr/exec_ctx.h"
-#include "test/core/util/test_config.h"
+#include "test/core/test_util/test_config.h"
 
 namespace grpc {
 namespace testing {

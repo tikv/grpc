@@ -28,8 +28,8 @@ grpc_cc_test(
     deps = [
         "//:grpc++_unsecure",
         "//src/proto/grpc/testing:echo_proto",
-        "//test/core/util:grpc_test_util_base",
-        "//test/core/util:grpc_test_util_unsecure",
+        "//test/core/test_util:grpc_test_util_base",
+        "//test/core/test_util:grpc_test_util_unsecure",
     ],
 )
 
@@ -43,8 +43,8 @@ grpc_cc_test(
     deps = [
         "//:grpc++_unsecure",
         "//src/proto/grpc/testing:echo_proto",
-        "//test/core/util:grpc_test_util_base",
-        "//test/core/util:grpc_test_util_unsecure",
+        "//test/core/test_util:grpc_test_util_base",
+        "//test/core/test_util:grpc_test_util_unsecure",
     ],
 )
 
@@ -58,8 +58,8 @@ grpc_cc_test(
     deps = [
         "//:grpc++_unsecure",
         "//src/proto/grpc/testing:echo_proto",
-        "//test/core/util:grpc_test_util_base",
-        "//test/core/util:grpc_test_util_unsecure",
+        "//test/core/test_util:grpc_test_util_base",
+        "//test/core/test_util:grpc_test_util_unsecure",
     ],
 )
 
@@ -72,13 +72,15 @@ grpc_cc_test(
         "//src/core/tsi/test_creds:server1.pem",
     ],
     external_deps = [
+        "absl/log:check",
         "gtest",
     ],
     deps = [
         "//:gpr",
         "//:grpc",
         "//:grpc++",
-        "//test/core/util:grpc_test_util",
+        "//:grpc++_base",
+        "//test/core/test_util:grpc_test_util",
         "//test/cpp/util:tls_test_utils",
     ],
 )
@@ -102,6 +104,6 @@ grpc_cc_test(
         "//:grpc",
         "//:grpc++",
         "//:grpc++_authorization_provider",
-        "//test/core/util:grpc_test_util",
+        "//test/core/test_util:grpc_test_util",
     ],
 )

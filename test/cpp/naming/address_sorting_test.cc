@@ -24,6 +24,8 @@
 #include <address_sorting/address_sorting.h>
 #include <gmock/gmock.h>
 
+#include "absl/log/check.h"
+
 #include <grpc/grpc.h>
 #include <grpc/support/alloc.h>
 #include <grpc/support/log.h>
@@ -31,8 +33,7 @@
 #include <grpc/support/sync.h>
 #include <grpc/support/time.h>
 
-#include "src/core/ext/filters/client_channel/client_channel.h"
-#include "src/core/ext/filters/client_channel/resolver/dns/c_ares/grpc_ares_wrapper.h"
+#include "src/core/client_channel/client_channel_filter.h"
 #include "src/core/lib/address_utils/sockaddr_utils.h"
 #include "src/core/lib/channel/channel_args.h"
 #include "src/core/lib/config/config_vars.h"
@@ -43,11 +44,12 @@
 #include "src/core/lib/iomgr/executor.h"
 #include "src/core/lib/iomgr/iomgr.h"
 #include "src/core/lib/iomgr/resolve_address.h"
-#include "src/core/lib/resolver/resolver.h"
-#include "src/core/lib/resolver/resolver_registry.h"
-#include "src/core/lib/resolver/server_address.h"
-#include "test/core/util/port.h"
-#include "test/core/util/test_config.h"
+#include "src/core/resolver/dns/c_ares/grpc_ares_wrapper.h"
+#include "src/core/resolver/endpoint_addresses.h"
+#include "src/core/resolver/resolver.h"
+#include "src/core/resolver/resolver_registry.h"
+#include "test/core/test_util/port.h"
+#include "test/core/test_util/test_config.h"
 #include "test/cpp/util/subprocess.h"
 #include "test/cpp/util/test_config.h"
 
@@ -74,16 +76,16 @@ grpc_resolved_address TestAddressToGrpcResolvedAddress(TestAddress test_addr) {
     memset(&in_dest, 0, sizeof(sockaddr_in));
     in_dest.sin_port = htons(atoi(port.c_str()));
     in_dest.sin_family = AF_INET;
-    GPR_ASSERT(inet_pton(AF_INET, host.c_str(), &in_dest.sin_addr) == 1);
+    CHECK_EQ(inet_pton(AF_INET, host.c_str(), &in_dest.sin_addr), 1);
     memcpy(&resolved_addr.addr, &in_dest, sizeof(sockaddr_in));
     resolved_addr.len = sizeof(sockaddr_in);
   } else {
-    GPR_ASSERT(test_addr.family == AF_INET6);
+    CHECK(test_addr.family == AF_INET6);
     sockaddr_in6 in6_dest;
     memset(&in6_dest, 0, sizeof(sockaddr_in6));
     in6_dest.sin6_port = htons(atoi(port.c_str()));
     in6_dest.sin6_family = AF_INET6;
-    GPR_ASSERT(inet_pton(AF_INET6, host.c_str(), &in6_dest.sin6_addr) == 1);
+    CHECK_EQ(inet_pton(AF_INET6, host.c_str(), &in6_dest.sin6_addr), 1);
     memcpy(&resolved_addr.addr, &in6_dest, sizeof(sockaddr_in6));
     resolved_addr.len = sizeof(sockaddr_in6);
   }
@@ -168,9 +170,9 @@ void OverrideAddressSortingSourceAddrFactory(
   address_sorting_override_source_addr_factory_for_testing(factory);
 }
 
-grpc_core::ServerAddressList BuildLbAddrInputs(
+grpc_core::EndpointAddressesList BuildLbAddrInputs(
     const std::vector<TestAddress>& test_addrs) {
-  grpc_core::ServerAddressList addresses;
+  grpc_core::EndpointAddressesList addresses;
   for (const auto& addr : test_addrs) {
     addresses.emplace_back(TestAddressToGrpcResolvedAddress(addr),
                            grpc_core::ChannelArgs());
@@ -178,7 +180,7 @@ grpc_core::ServerAddressList BuildLbAddrInputs(
   return addresses;
 }
 
-void VerifyLbAddrOutputs(const grpc_core::ServerAddressList& addresses,
+void VerifyLbAddrOutputs(const grpc_core::EndpointAddressesList& addresses,
                          std::vector<std::string> expected_addrs) {
   EXPECT_EQ(addresses.size(), expected_addrs.size());
   for (size_t i = 0; i < addresses.size(); ++i) {

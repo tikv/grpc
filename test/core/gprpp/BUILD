@@ -12,13 +12,34 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-load("//bazel:grpc_build_system.bzl", "grpc_cc_test", "grpc_package")
 load("//bazel:custom_exec_properties.bzl", "LARGE_MACHINE")
-load("//test/core/util:grpc_fuzzer.bzl", "grpc_proto_fuzzer")
+load("//bazel:grpc_build_system.bzl", "grpc_cc_test", "grpc_package")
+load("//test/core/test_util:grpc_fuzzer.bzl", "grpc_proto_fuzzer")
 
 licenses(["notice"])
 
 grpc_package(name = "test/core/gprpp")
+
+grpc_cc_test(
+    name = "directory_reader_test",
+    srcs = ["directory_reader_test.cc"],
+    data = [
+        "//test/core/tsi/test_creds/crl_data/crls:ab06acdd.r0",
+        "//test/core/tsi/test_creds/crl_data/crls:b9322cac.r0",
+        "//test/core/tsi/test_creds/crl_data/crls:current.crl",
+        "//test/core/tsi/test_creds/crl_data/crls:intermediate.crl",
+    ],
+    external_deps = [
+        "gtest",
+    ],
+    language = "C++",
+    uses_event_engine = False,
+    uses_polling = False,
+    deps = [
+        "//src/core:directory_reader",
+        "//test/core/test_util:grpc_test_util",
+    ],
+)
 
 grpc_cc_test(
     name = "examine_stack_test",
@@ -35,7 +56,7 @@ grpc_cc_test(
     uses_polling = False,
     deps = [
         "//:gpr",
-        "//test/core/util:grpc_test_util",
+        "//test/core/test_util:grpc_test_util",
     ],
 )
 
@@ -50,7 +71,7 @@ grpc_cc_test(
     uses_polling = False,
     deps = [
         "//:gpr",
-        "//test/core/util:grpc_test_util",
+        "//test/core/test_util:grpc_test_util",
     ],
 )
 
@@ -63,6 +84,18 @@ grpc_cc_test(
     uses_polling = False,
     deps = [
         "//src/core:bitset",
+    ],
+)
+
+grpc_cc_test(
+    name = "if_list_test",
+    srcs = ["if_list_test.cc"],
+    external_deps = ["gtest"],
+    language = "C++",
+    uses_event_engine = False,
+    uses_polling = False,
+    deps = [
+        "//src/core:if_list",
     ],
 )
 
@@ -103,6 +136,18 @@ grpc_cc_test(
 )
 
 grpc_cc_test(
+    name = "down_cast_test",
+    srcs = ["down_cast_test.cc"],
+    external_deps = ["gtest"],
+    language = "C++",
+    uses_event_engine = False,
+    uses_polling = False,
+    deps = [
+        "//src/core:down_cast",
+    ],
+)
+
+grpc_cc_test(
     name = "table_test",
     srcs = ["table_test.cc"],
     external_deps = [
@@ -126,7 +171,7 @@ grpc_cc_test(
     uses_polling = False,
     deps = [
         "//:gpr",
-        "//test/core/util:grpc_test_util",
+        "//test/core/test_util:grpc_test_util",
     ],
 )
 
@@ -141,7 +186,7 @@ grpc_cc_test(
     uses_polling = False,
     deps = [
         "//:gpr",
-        "//test/core/util:grpc_test_util",
+        "//test/core/test_util:grpc_test_util",
     ],
 )
 
@@ -154,7 +199,7 @@ grpc_cc_test(
     language = "C++",
     deps = [
         "//:orphanable",
-        "//test/core/util:grpc_test_util",
+        "//test/core/test_util:grpc_test_util",
     ],
 )
 
@@ -167,7 +212,7 @@ grpc_cc_test(
     language = "C++",
     deps = [
         "//src/core:ref_counted",
-        "//test/core/util:grpc_test_util",
+        "//test/core/test_util:grpc_test_util",
     ],
 )
 
@@ -175,12 +220,13 @@ grpc_cc_test(
     name = "dual_ref_counted_test",
     srcs = ["dual_ref_counted_test.cc"],
     external_deps = [
+        "absl/log:check",
         "gtest",
     ],
     language = "C++",
     deps = [
         "//src/core:dual_ref_counted",
-        "//test/core/util:grpc_test_util",
+        "//test/core/test_util:grpc_test_util",
     ],
 )
 
@@ -188,6 +234,8 @@ grpc_cc_test(
     name = "ref_counted_ptr_test",
     srcs = ["ref_counted_ptr_test.cc"],
     external_deps = [
+        "absl/container:flat_hash_set",
+        "absl/log:check",
         "gtest",
     ],
     language = "C++",
@@ -195,7 +243,7 @@ grpc_cc_test(
         "//:ref_counted_ptr",
         "//src/core:dual_ref_counted",
         "//src/core:ref_counted",
-        "//test/core/util:grpc_test_util",
+        "//test/core/test_util:grpc_test_util",
     ],
 )
 
@@ -208,7 +256,7 @@ grpc_cc_test(
     uses_polling = False,
     deps = [
         "//:gpr",
-        "//test/core/util:grpc_test_util",
+        "//test/core/test_util:grpc_test_util",
     ],
 )
 
@@ -224,7 +272,7 @@ grpc_cc_test(
     deps = [
         "//:gpr",
         "//:grpc",
-        "//test/core/util:grpc_test_util",
+        "//test/core/test_util:grpc_test_util",
     ],
 )
 
@@ -239,7 +287,7 @@ grpc_cc_test(
     uses_polling = False,
     deps = [
         "//:gpr",
-        "//test/core/util:grpc_test_util",
+        "//test/core/test_util:grpc_test_util",
     ],
 )
 
@@ -254,7 +302,7 @@ grpc_cc_test(
     uses_polling = False,
     deps = [
         "//:gpr",
-        "//test/core/util:grpc_test_util",
+        "//test/core/test_util:grpc_test_util",
     ],
 )
 
@@ -291,6 +339,7 @@ grpc_proto_fuzzer(
     name = "chunked_vector_fuzzer",
     srcs = ["chunked_vector_fuzzer.cc"],
     corpus = "chunked_vector_corpora",
+    external_deps = ["absl/log:check"],
     language = "C++",
     proto = "chunked_vector_fuzzer.proto",
     tags = ["no_windows"],
@@ -299,7 +348,7 @@ grpc_proto_fuzzer(
     deps = [
         "//src/core:chunked_vector",
         "//src/core:resource_quota",
-        "//test/core/util:grpc_test_util",
+        "//test/core/test_util:grpc_test_util",
     ],
 )
 
@@ -370,7 +419,8 @@ grpc_cc_test(
     deps = [
         "//:gpr",
         "//:grpc",
-        "//test/core/util:grpc_test_util",
+        "//test/core/event_engine:event_engine_test_utils",
+        "//test/core/test_util:grpc_test_util",
     ],
 )
 
@@ -383,7 +433,7 @@ grpc_cc_test(
     language = "C++",
     deps = [
         "//src/core:validation_errors",
-        "//test/core/util:grpc_test_util",
+        "//test/core/test_util:grpc_test_util",
     ],
 )
 
@@ -410,7 +460,7 @@ grpc_cc_test(
     uses_polling = False,
     deps = [
         "//src/core:load_file",
-        "//test/core/util:grpc_test_util",
+        "//test/core/test_util:grpc_test_util",
     ],
 )
 
@@ -425,6 +475,6 @@ grpc_cc_test(
     uses_polling = False,
     deps = [
         "//src/core:uuid_v4",
-        "//test/core/util:grpc_test_util",
+        "//test/core/test_util:grpc_test_util",
     ],
 )

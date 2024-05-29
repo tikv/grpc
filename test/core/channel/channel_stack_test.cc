@@ -18,8 +18,6 @@
 
 #include "src/core/lib/channel/channel_stack.h"
 
-#include <string>
-
 #include "absl/status/status.h"
 #include "absl/types/optional.h"
 #include "gtest/gtest.h"
@@ -31,7 +29,7 @@
 #include "src/core/lib/config/core_configuration.h"
 #include "src/core/lib/gprpp/status_helper.h"
 #include "src/core/lib/iomgr/exec_ctx.h"
-#include "test/core/util/test_config.h"
+#include "test/core/test_util/test_config.h"
 
 static grpc_error_handle channel_init_func(grpc_channel_element* elem,
                                            grpc_channel_element_args* args) {
@@ -84,6 +82,7 @@ static void free_call(void* arg, grpc_error_handle /*error*/) {
 TEST(ChannelStackTest, CreateChannelStack) {
   const grpc_channel_filter filter = {
       call_func,
+      nullptr,
       nullptr,
       channel_func,
       sizeof(int),

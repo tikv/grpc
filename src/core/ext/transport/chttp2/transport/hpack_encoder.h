@@ -19,8 +19,6 @@
 #ifndef GRPC_SRC_CORE_EXT_TRANSPORT_CHTTP2_TRANSPORT_HPACK_ENCODER_H
 #define GRPC_SRC_CORE_EXT_TRANSPORT_CHTTP2_TRANSPORT_HPACK_ENCODER_H
 
-#include <grpc/support/port_platform.h>
-
 #include <stddef.h>
 
 #include <cstdint>
@@ -33,6 +31,7 @@
 
 #include <grpc/slice.h>
 #include <grpc/support/log.h>
+#include <grpc/support/port_platform.h>
 
 #include "src/core/ext/transport/chttp2/transport/hpack_constants.h"
 #include "src/core/ext/transport/chttp2/transport/hpack_encoder_table.h"
@@ -276,8 +275,10 @@ class Compressor<MetadataTrait, SmallSetOfValuesCompressor> {
 };
 
 struct PreviousTimeout {
-  Timeout timeout;
-  uint32_t index;
+  Timeout timeout = Timeout::FromDuration(Duration::Zero());
+  // Dynamic table index of a previously sent timeout
+  // 0 is guaranteed not in the dynamic table so is a safe initializer
+  uint32_t index = 0;
 };
 
 class TimeoutCompressorImpl {
@@ -285,7 +286,9 @@ class TimeoutCompressorImpl {
   void EncodeWith(absl::string_view key, Timestamp deadline, Encoder* encoder);
 
  private:
-  std::vector<PreviousTimeout> previous_timeouts_;
+  static constexpr const size_t kNumPreviousValues = 5;
+  PreviousTimeout previous_timeouts_[kNumPreviousValues];
+  uint32_t next_previous_value_ = 0;
 };
 
 template <typename MetadataTrait>
@@ -326,6 +329,11 @@ class HPackCompressor {
  public:
   HPackCompressor() = default;
   ~HPackCompressor() = default;
+
+  HPackCompressor(const HPackCompressor&) = delete;
+  HPackCompressor& operator=(const HPackCompressor&) = delete;
+  HPackCompressor(HPackCompressor&&) = default;
+  HPackCompressor& operator=(HPackCompressor&&) = default;
 
   // Maximum table size we'll actually use.
   static constexpr uint32_t kMaxTableSize = 1024 * 1024;

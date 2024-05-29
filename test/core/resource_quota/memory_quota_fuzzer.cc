@@ -40,7 +40,7 @@
 #include "src/libfuzzer/libfuzzer_macro.h"
 #include "test/core/resource_quota/call_checker.h"
 #include "test/core/resource_quota/memory_quota_fuzzer.pb.h"
-#include "test/core/util/fuzz_config_vars.h"
+#include "test/core/test_util/fuzz_config_vars.h"
 
 bool squelch = true;
 bool leak_check = true;
@@ -91,10 +91,9 @@ class Fuzzer {
           memory_quotas_.erase(action.quota());
           break;
         case memory_quota_fuzzer::Action::kCreateAllocator:
-          WithQuota(action.quota(), [this, action, i](MemoryQuota* q) {
-            memory_allocators_.emplace(
-                action.allocator(),
-                q->CreateMemoryOwner(absl::StrCat("allocator-step-", i)));
+          WithQuota(action.quota(), [this, action](MemoryQuota* q) {
+            memory_allocators_.emplace(action.allocator(),
+                                       q->CreateMemoryOwner());
           });
           break;
         case memory_quota_fuzzer::Action::kDeleteAllocator:

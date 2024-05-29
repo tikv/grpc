@@ -15,20 +15,18 @@
 #ifndef GRPC_SRC_CORE_LIB_PROMISE_LATCH_H
 #define GRPC_SRC_CORE_LIB_PROMISE_LATCH_H
 
-#include <grpc/support/port_platform.h>
-
 #include <stdint.h>
 
 #include <atomic>
 #include <string>
-#include <type_traits>
 #include <utility>
 
+#include "absl/log/check.h"
 #include "absl/strings/str_cat.h"
 
 #include <grpc/support/log.h>
+#include <grpc/support/port_platform.h>
 
-#include "src/core/lib/debug/trace.h"
 #include "src/core/lib/promise/activity.h"
 #include "src/core/lib/promise/poll.h"
 #include "src/core/lib/promise/trace.h"
@@ -39,21 +37,23 @@ namespace grpc_core {
 // Initially the Latch is unset.
 // It can be waited upon by the Wait method, which produces a Promise that
 // resolves when the Latch is Set to a value of type T.
+// Latches only work correctly within a single activity.
 template <typename T>
 class Latch {
  public:
   Latch() = default;
   Latch(const Latch&) = delete;
+  explicit Latch(T value) : value_(std::move(value)), has_value_(true) {}
   Latch& operator=(const Latch&) = delete;
   Latch(Latch&& other) noexcept
       : value_(std::move(other.value_)), has_value_(other.has_value_) {
 #ifndef NDEBUG
-    GPR_DEBUG_ASSERT(!other.has_had_waiters_);
+    DCHECK(!other.has_had_waiters_);
 #endif
   }
   Latch& operator=(Latch&& other) noexcept {
 #ifndef NDEBUG
-    GPR_DEBUG_ASSERT(!other.has_had_waiters_);
+    DCHECK(!other.has_had_waiters_);
 #endif
     value_ = std::move(other.value_);
     has_value_ = other.has_value_;
@@ -103,7 +103,7 @@ class Latch {
     if (grpc_trace_promise_primitives.enabled()) {
       gpr_log(GPR_INFO, "%sSet %s", DebugTag().c_str(), StateString().c_str());
     }
-    GPR_DEBUG_ASSERT(!has_value_);
+    DCHECK(!has_value_);
     value_ = std::move(value);
     has_value_ = true;
     waiter_.Wake();
@@ -113,7 +113,7 @@ class Latch {
 
  private:
   std::string DebugTag() {
-    return absl::StrCat(Activity::current()->DebugTag(), " LATCH[0x",
+    return absl::StrCat(GetContext<Activity>()->DebugTag(), " LATCH[0x",
                         reinterpret_cast<uintptr_t>(this), "]: ");
   }
 
@@ -146,12 +146,12 @@ class Latch<void> {
   Latch& operator=(const Latch&) = delete;
   Latch(Latch&& other) noexcept : is_set_(other.is_set_) {
 #ifndef NDEBUG
-    GPR_DEBUG_ASSERT(!other.has_had_waiters_);
+    DCHECK(!other.has_had_waiters_);
 #endif
   }
   Latch& operator=(Latch&& other) noexcept {
 #ifndef NDEBUG
-    GPR_DEBUG_ASSERT(!other.has_had_waiters_);
+    DCHECK(!other.has_had_waiters_);
 #endif
     is_set_ = other.is_set_;
     return *this;
@@ -180,14 +180,16 @@ class Latch<void> {
     if (grpc_trace_promise_primitives.enabled()) {
       gpr_log(GPR_INFO, "%sSet %s", DebugTag().c_str(), StateString().c_str());
     }
-    GPR_DEBUG_ASSERT(!is_set_);
+    DCHECK(!is_set_);
     is_set_ = true;
     waiter_.Wake();
   }
 
+  bool is_set() const { return is_set_; }
+
  private:
   std::string DebugTag() {
-    return absl::StrCat(Activity::current()->DebugTag(), " LATCH(void)[0x",
+    return absl::StrCat(GetContext<Activity>()->DebugTag(), " LATCH(void)[0x",
                         reinterpret_cast<uintptr_t>(this), "]: ");
   }
 
@@ -204,6 +206,9 @@ class Latch<void> {
 #endif
   IntraActivityWaiter waiter_;
 };
+
+template <typename T>
+using LatchWaitPromise = decltype(std::declval<Latch<T>>().Wait());
 
 // A Latch that can have its value observed by outside threads, but only waited
 // upon from inside a single activity.
@@ -254,7 +259,7 @@ class ExternallyObservableLatch<void> {
 
  private:
   std::string DebugTag() {
-    return absl::StrCat(Activity::current()->DebugTag(), " LATCH(void)[0x",
+    return absl::StrCat(GetContext<Activity>()->DebugTag(), " LATCH(void)[0x",
                         reinterpret_cast<uintptr_t>(this), "]: ");
   }
 
@@ -268,9 +273,6 @@ class ExternallyObservableLatch<void> {
   std::atomic<bool> is_set_{false};
   IntraActivityWaiter waiter_;
 };
-
-template <typename T>
-using LatchWaitPromise = decltype(std::declval<Latch<T>>().Wait());
 
 }  // namespace grpc_core
 

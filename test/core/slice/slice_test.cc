@@ -16,14 +16,13 @@
 //
 //
 
-#include <grpc/support/port_platform.h>
-
 #include "src/core/lib/slice/slice.h"
 
 #include <inttypes.h>
 #include <string.h>
 
 #include <algorithm>
+#include <functional>
 #include <memory>
 #include <random>
 #include <string>
@@ -34,10 +33,13 @@
 
 #include <grpc/slice.h>
 #include <grpc/support/log.h>
+#include <grpc/support/port_platform.h>
 
 #include "src/core/lib/gprpp/memory.h"
+#include "src/core/lib/gprpp/no_destruct.h"
 #include "src/core/lib/slice/slice_internal.h"
-#include "test/core/util/build.h"
+#include "src/core/lib/slice/slice_refcount.h"
+#include "test/core/test_util/build.h"
 
 TEST(GrpcSliceTest, MallocReturnsSomethingSensible) {
   // Calls grpc_slice_create for various lengths and verifies the internals for
@@ -350,6 +352,36 @@ INSTANTIATE_TEST_SUITE_P(SliceSizedTest, SliceSizedTest,
                          [](const ::testing::TestParamInfo<size_t>& info) {
                            return std::to_string(info.param);
                          });
+
+class TakeUniquelyOwnedTest
+    : public ::testing::TestWithParam<std::function<Slice()>> {};
+
+TEST_P(TakeUniquelyOwnedTest, TakeUniquelyOwned) {
+  auto owned = GetParam()().TakeUniquelyOwned();
+  auto* refcount = owned.c_slice().refcount;
+  if (refcount != nullptr && refcount != grpc_slice_refcount::NoopRefcount()) {
+    EXPECT_TRUE(refcount->IsUnique());
+  }
+}
+
+INSTANTIATE_TEST_SUITE_P(
+    TakeUniquelyOwnedTest, TakeUniquelyOwnedTest,
+    ::testing::Values(
+        []() {
+          static const NoDestruct<std::string> big('a', 1024);
+          return Slice::FromStaticBuffer(big->data(), big->size());
+        },
+        []() {
+          static const NoDestruct<std::string> big('a', 1024);
+          return Slice::FromCopiedBuffer(big->data(), big->size());
+        },
+        []() {
+          static const NoDestruct<std::string> big('a', 1024);
+          static const NoDestruct<Slice> big_slice(
+              Slice::FromCopiedBuffer(big->data(), big->size()));
+          return big_slice->Ref();
+        },
+        []() { return Slice::FromStaticString("hello"); }));
 
 size_t SumSlice(const Slice& slice) {
   size_t x = 0;

@@ -14,6 +14,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+load("@build_bazel_rules_apple//apple:macos.bzl", "macos_unit_test")
+load("@build_bazel_rules_apple//apple:resources.bzl", "apple_resource_bundle")
+load("@build_bazel_rules_apple//apple:tvos.bzl", "tvos_application", "tvos_unit_test")
 load("//bazel:grpc_build_system.bzl", "grpc_sh_test")
 load(
     "//src/objective-c:grpc_objc_internal_library.bzl",
@@ -22,9 +25,6 @@ load(
     "local_objc_grpc_library",
     "proto_library_objc_wrapper",
 )
-load("@build_bazel_rules_apple//apple:resources.bzl", "apple_resource_bundle")
-load("@build_bazel_rules_apple//apple:macos.bzl", "macos_unit_test")
-load("@build_bazel_rules_apple//apple:tvos.bzl", "tvos_application", "tvos_unit_test")
 
 licenses(["notice"])
 
@@ -324,13 +324,46 @@ grpc_objc_testing_library(
     deps = [
         "//:gpr_platform",
         "//src/core:iomgr_port",
-        "//test/core/util:grpc_test_util",
+        "//test/core/test_util:grpc_test_util",
     ],
 )
 
 grpc_objc_ios_unit_test(
     name = "CFStreamTests",
     deps = [":CFStreamTests-lib"],
+)
+
+grpc_objc_testing_library(
+    name = "EventEngineClientTests-lib",
+    srcs = ["EventEngineTests/CFEventEngineClientTests.mm"],
+    # defines = ["GRPC_IOS_EVENT_ENGINE_CLIENT=1"],
+    deps = [
+        "//src/core:cf_event_engine",
+        "//test/core/event_engine/test_suite/posix:oracle_event_engine_posix",
+        "//test/core/event_engine/test_suite/tests:client",
+    ],
+)
+
+grpc_objc_testing_library(
+    name = "EventEngineUnitTests-lib",
+    srcs = ["EventEngineTests/CFEventEngineUnitTests.mm"],
+    defines = ["GRPC_IOS_EVENT_ENGINE_CLIENT=1"],
+    deps = [
+        "//src/core:cf_event_engine",
+        "//test/core/event_engine/cf:cf_engine_unit_test_lib",
+        "//test/core/event_engine/test_suite/tests:dns",
+        "//test/core/event_engine/test_suite/tests:timer",
+    ],
+)
+
+grpc_objc_ios_unit_test(
+    name = "EventEngineClientTests",
+    deps = [":EventEngineClientTests-lib"],
+)
+
+grpc_objc_ios_unit_test(
+    name = "EventEngineUnitTests",
+    deps = [":EventEngineUnitTests-lib"],
 )
 
 # Note that bazel currently doesn't support running tvos_unit_test
@@ -367,8 +400,8 @@ grpc_sh_test(
     name = "objc_codegen_plugin_test",
     srcs = ["PluginTest/plugin_test.sh"],
     data = [
-        "@com_google_protobuf//:protoc",
         "//src/compiler:grpc_objective_c_plugin",
+        "@com_google_protobuf//:protoc",
     ] + glob(["PluginTest/*.proto"]),
     uses_polling = False,
 )
@@ -377,8 +410,8 @@ grpc_sh_test(
     name = "objc_codegen_plugin_option_test",
     srcs = ["PluginTest/plugin_option_test.sh"],
     data = [
-        "@com_google_protobuf//:protoc",
         "//src/compiler:grpc_objective_c_plugin",
+        "@com_google_protobuf//:protoc",
         "@com_google_protobuf//:well_known_type_protos",
     ] + glob(["RemoteTestClient/*.proto"]),
     uses_polling = False,

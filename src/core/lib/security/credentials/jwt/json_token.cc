@@ -16,8 +16,6 @@
 //
 //
 
-#include <grpc/support/port_platform.h>
-
 #include "src/core/lib/security/credentials/jwt/json_token.h"
 
 #include <stdint.h>
@@ -31,20 +29,24 @@
 #include <openssl/pem.h>
 #include <openssl/rsa.h>
 
+#include "absl/log/check.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
+#include "absl/strings/escaping.h"
 
+#include <grpc/credentials.h>
 #include <grpc/grpc_security.h>
 #include <grpc/support/alloc.h>
 #include <grpc/support/json.h>
 #include <grpc/support/log.h>
+#include <grpc/support/port_platform.h>
+#include <grpc/support/string_util.h>
 #include <grpc/support/time.h>
 
 #include "src/core/lib/iomgr/error.h"
 #include "src/core/lib/json/json_reader.h"
 #include "src/core/lib/json/json_writer.h"
 #include "src/core/lib/security/util/json_util.h"
-#include "src/core/lib/slice/b64.h"
 
 using grpc_core::Json;
 
@@ -115,8 +117,12 @@ grpc_auth_json_key grpc_auth_json_key_create_from_json(const Json& json) {
     gpr_log(GPR_ERROR, "Could not write into openssl BIO.");
     goto end;
   }
+#if OPENSSL_VERSION_NUMBER < 0x30000000L
   result.private_key =
       PEM_read_bio_RSAPrivateKey(bio, nullptr, nullptr, const_cast<char*>(""));
+#else
+  result.private_key = PEM_read_bio_PrivateKey(bio, nullptr, nullptr, nullptr);
+#endif
   if (result.private_key == nullptr) {
     gpr_log(GPR_ERROR, "Could not deserialize private key.");
     goto end;
@@ -158,7 +164,11 @@ void grpc_auth_json_key_destruct(grpc_auth_json_key* json_key) {
     json_key->client_email = nullptr;
   }
   if (json_key->private_key != nullptr) {
+#if OPENSSL_VERSION_NUMBER < 0x30000000L
     RSA_free(json_key->private_key);
+#else
+    EVP_PKEY_free(json_key->private_key);
+#endif
     json_key->private_key = nullptr;
   }
 }
@@ -172,7 +182,7 @@ static char* encoded_jwt_header(const char* key_id, const char* algorithm) {
       {"kid", Json::FromString(key_id)},
   });
   std::string json_str = grpc_core::JsonDump(json);
-  return grpc_base64_encode(json_str.c_str(), json_str.size(), 1, 0);
+  return gpr_strdup(absl::WebSafeBase64Escape(json_str).c_str());
 }
 
 static char* encoded_jwt_claim(const grpc_auth_json_key* json_key,
@@ -200,7 +210,7 @@ static char* encoded_jwt_claim(const grpc_auth_json_key* json_key,
 
   std::string json_str =
       grpc_core::JsonDump(Json::FromObject(std::move(object)));
-  return grpc_base64_encode(json_str.c_str(), json_str.size(), 1, 0);
+  return gpr_strdup(absl::WebSafeBase64Escape(json_str).c_str());
 }
 
 static char* dot_concat_and_free_strings(char* str1, char* str2) {
@@ -215,8 +225,8 @@ static char* dot_concat_and_free_strings(char* str1, char* str2) {
   *(current++) = '.';
   memcpy(current, str2, str2_len);
   current += str2_len;
-  GPR_ASSERT(current >= result);
-  GPR_ASSERT((uintptr_t)(current - result) == result_len);
+  CHECK(current >= result);
+  CHECK((uintptr_t)(current - result) == result_len);
   *current = '\0';
   gpr_free(str1);
   gpr_free(str2);
@@ -237,7 +247,9 @@ char* compute_and_encode_signature(const grpc_auth_json_key* json_key,
                                    const char* to_sign) {
   const EVP_MD* md = openssl_digest_from_algorithm(signature_algorithm);
   EVP_MD_CTX* md_ctx = nullptr;
+#if OPENSSL_VERSION_NUMBER < 0x30000000L
   EVP_PKEY* key = EVP_PKEY_new();
+#endif
   size_t sig_len = 0;
   unsigned char* sig = nullptr;
   char* result = nullptr;
@@ -247,8 +259,13 @@ char* compute_and_encode_signature(const grpc_auth_json_key* json_key,
     gpr_log(GPR_ERROR, "Could not create MD_CTX");
     goto end;
   }
+#if OPENSSL_VERSION_NUMBER < 0x30000000L
   EVP_PKEY_set1_RSA(key, json_key->private_key);
   if (EVP_DigestSignInit(md_ctx, nullptr, md, nullptr, key) != 1) {
+#else
+  if (EVP_DigestSignInit(md_ctx, nullptr, md, nullptr, json_key->private_key) !=
+      1) {
+#endif
     gpr_log(GPR_ERROR, "DigestInit failed.");
     goto end;
   }
@@ -265,10 +282,15 @@ char* compute_and_encode_signature(const grpc_auth_json_key* json_key,
     gpr_log(GPR_ERROR, "DigestFinal (signature compute) failed.");
     goto end;
   }
-  result = grpc_base64_encode(sig, sig_len, 1, 0);
+  result =
+      gpr_strdup(absl::WebSafeBase64Escape(
+                     absl::string_view(reinterpret_cast<char*>(sig), sig_len))
+                     .c_str());
 
 end:
+#if OPENSSL_VERSION_NUMBER < 0x30000000L
   if (key != nullptr) EVP_PKEY_free(key);
+#endif
   if (md_ctx != nullptr) EVP_MD_CTX_destroy(md_ctx);
   if (sig != nullptr) gpr_free(sig);
   return result;

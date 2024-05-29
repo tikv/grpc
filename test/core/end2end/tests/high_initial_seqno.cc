@@ -16,9 +16,11 @@
 //
 //
 
+#include <memory>
+
 #include "gtest/gtest.h"
 
-#include <grpc/grpc.h>
+#include <grpc/impl/channel_arg_names.h>
 #include <grpc/status.h>
 
 #include "src/core/lib/channel/channel_args.h"
@@ -29,7 +31,7 @@ namespace grpc_core {
 namespace {
 
 void SimpleRequest(CoreEnd2endTest& test) {
-  auto c = test.NewClientCall("/foo").Timeout(Duration::Seconds(5)).Create();
+  auto c = test.NewClientCall("/foo").Timeout(Duration::Minutes(1)).Create();
   CoreEnd2endTest::IncomingMetadata server_initial_metadata;
   CoreEnd2endTest::IncomingStatusOnClient server_status;
   c.NewBatch(1)

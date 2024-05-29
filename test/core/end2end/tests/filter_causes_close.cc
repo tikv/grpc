@@ -18,6 +18,9 @@
 
 #include <stdint.h>
 
+#include <memory>
+#include <utility>
+
 #include "absl/status/status.h"
 #include "gtest/gtest.h"
 
@@ -25,14 +28,16 @@
 
 #include "src/core/lib/channel/channel_fwd.h"
 #include "src/core/lib/channel/channel_stack.h"
-#include "src/core/lib/channel/channel_stack_builder.h"
 #include "src/core/lib/config/core_configuration.h"
 #include "src/core/lib/gprpp/debug_location.h"
 #include "src/core/lib/gprpp/status_helper.h"
 #include "src/core/lib/gprpp/time.h"
 #include "src/core/lib/iomgr/closure.h"
 #include "src/core/lib/iomgr/error.h"
+#include "src/core/lib/promise/arena_promise.h"
+#include "src/core/lib/promise/promise.h"
 #include "src/core/lib/surface/channel_stack_type.h"
+#include "src/core/lib/transport/metadata_batch.h"
 #include "src/core/lib/transport/transport.h"
 #include "test/core/end2end/end2end_tests.h"
 
@@ -92,7 +97,14 @@ void destroy_channel_elem(grpc_channel_element* /*elem*/) {}
 
 const grpc_channel_filter test_filter = {
     start_transport_stream_op_batch,
-    nullptr,
+    [](grpc_channel_element*, CallArgs,
+       NextPromiseFactory) -> ArenaPromise<ServerMetadataHandle> {
+      return Immediate(ServerMetadataFromStatus(
+          absl::PermissionDeniedError("Failure that's not preventable.")));
+    },
+    [](grpc_channel_element*, CallSpineInterface*) {
+      Crash("Should never be called");
+    },
     grpc_channel_next_op,
     sizeof(call_data),
     init_call_elem,
@@ -106,12 +118,11 @@ const grpc_channel_filter test_filter = {
     "filter_causes_close"};
 
 CORE_END2END_TEST(CoreEnd2endTest, FilterCausesClose) {
+  if (IsPromiseBasedClientCallEnabled()) {
+    GTEST_SKIP() << "disabled for promises until callv3 is further along";
+  }
   CoreConfiguration::RegisterBuilder([](CoreConfiguration::Builder* builder) {
-    builder->channel_init()->RegisterStage(
-        GRPC_SERVER_CHANNEL, 0, [](ChannelStackBuilder* builder) {
-          builder->PrependFilter(&test_filter);
-          return true;
-        });
+    builder->channel_init()->RegisterFilter(GRPC_SERVER_CHANNEL, &test_filter);
   });
   auto c = NewClientCall("/foo").Timeout(Duration::Seconds(5)).Create();
   CoreEnd2endTest::IncomingStatusOnClient server_status;

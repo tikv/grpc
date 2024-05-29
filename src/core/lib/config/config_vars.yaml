@@ -35,6 +35,7 @@
     A comma separated list of currently active experiments. Experiments may be
     prefixed with a '-' to disable them.
   default:
+  fuzz_type: uint64
   fuzz: ValidateExperimentsStringForFuzzing
 - name: client_channel_backup_poll_interval_ms
   type: int
@@ -125,3 +126,8 @@
     ECDHE-ECDSA-AES256-GCM-SHA384:\
     ECDHE-RSA-AES128-GCM-SHA256:\
     ECDHE-RSA-AES256-GCM-SHA384"
+- name: absl_logging
+  type: bool
+  default: false
+  description:
+    Use absl logging from within gpr_log.

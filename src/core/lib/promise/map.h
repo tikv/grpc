@@ -15,13 +15,12 @@
 #ifndef GRPC_SRC_CORE_LIB_PROMISE_MAP_H
 #define GRPC_SRC_CORE_LIB_PROMISE_MAP_H
 
-#include <grpc/support/port_platform.h>
-
 #include <stddef.h>
 
 #include <tuple>
-#include <type_traits>
 #include <utility>
+
+#include <grpc/support/port_platform.h>
 
 #include "src/core/lib/promise/detail/promise_like.h"
 #include "src/core/lib/promise/poll.h"

@@ -16,16 +16,31 @@
 //
 //
 
+#include "src/core/lib/address_utils/parse_address.h"
+
+#include "absl/log/check.h"
+
 #include <grpc/support/port_platform.h>
 
-#include "src/core/lib/address_utils/parse_address.h"
+#include "src/core/lib/iomgr/port.h"  // IWYU pragma: keep
+
+#ifdef GRPC_HAVE_VSOCK
+#include <linux/vm_sockets.h>
+#endif
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #ifdef GRPC_HAVE_UNIX_SOCKET
+#ifdef GPR_WINDOWS
+// clang-format off
+#include <ws2def.h>
+#include <afunix.h>
+// clang-format on
+#else
 #include <sys/un.h>
-#endif
+#endif  // GPR_WINDOWS
+#endif  // GRPC_HAVE_UNIX_SOCKET
 #include <string>
 
 #include "absl/status/status.h"
@@ -38,7 +53,6 @@
 #include "src/core/lib/gprpp/host_port.h"
 #include "src/core/lib/gprpp/status_helper.h"
 #include "src/core/lib/iomgr/grpc_if_nametoindex.h"
-#include "src/core/lib/iomgr/port.h"
 #include "src/core/lib/iomgr/sockaddr.h"
 #include "src/core/lib/iomgr/socket_utils.h"
 
@@ -144,6 +158,60 @@ grpc_error_handle UnixAbstractSockaddrPopulate(
 }  // namespace grpc_core
 #endif  // GRPC_HAVE_UNIX_SOCKET
 
+#ifdef GRPC_HAVE_VSOCK
+
+bool grpc_parse_vsock(const grpc_core::URI& uri,
+                      grpc_resolved_address* resolved_addr) {
+  if (uri.scheme() != "vsock") {
+    gpr_log(GPR_ERROR, "Expected 'vsock' scheme, got '%s'",
+            uri.scheme().c_str());
+    return false;
+  }
+  grpc_error_handle error =
+      grpc_core::VSockaddrPopulate(uri.path(), resolved_addr);
+  if (!error.ok()) {
+    gpr_log(GPR_ERROR, "%s", grpc_core::StatusToString(error).c_str());
+    return false;
+  }
+  return true;
+}
+
+namespace grpc_core {
+
+grpc_error_handle VSockaddrPopulate(absl::string_view path,
+                                    grpc_resolved_address* resolved_addr) {
+  memset(resolved_addr, 0, sizeof(*resolved_addr));
+  struct sockaddr_vm* vm =
+      reinterpret_cast<struct sockaddr_vm*>(resolved_addr->addr);
+  vm->svm_family = AF_VSOCK;
+  std::string s = std::string(path);
+  if (sscanf(s.c_str(), "%u:%u", &vm->svm_cid, &vm->svm_port) != 2) {
+    return GRPC_ERROR_CREATE(
+        absl::StrCat("Failed to parse vsock cid/port: ", s));
+  }
+  resolved_addr->len = static_cast<socklen_t>(sizeof(*vm));
+  return absl::OkStatus();
+}
+
+}  // namespace grpc_core
+
+#else   // GRPC_HAVE_VSOCK
+
+bool grpc_parse_vsock(const grpc_core::URI& /* uri */,
+                      grpc_resolved_address* /* resolved_addr */) {
+  GPR_UNREACHABLE_CODE(return false);
+}
+
+namespace grpc_core {
+
+grpc_error_handle VSockaddrPopulate(
+    absl::string_view /* path */, grpc_resolved_address* /* resolved_addr */) {
+  GPR_UNREACHABLE_CODE(return absl::InvalidArgumentError("vsock unsupported."));
+}
+
+}  // namespace grpc_core
+#endif  // GRPC_HAVE_VSOCK
+
 bool grpc_parse_ipv4_hostport(absl::string_view hostport,
                               grpc_resolved_address* addr, bool log_errors) {
   bool success = false;
@@ -218,7 +286,7 @@ bool grpc_parse_ipv6_hostport(absl::string_view hostport,
   char* host_end =
       static_cast<char*>(gpr_memrchr(host.c_str(), '%', host.size()));
   if (host_end != nullptr) {
-    GPR_ASSERT(host_end >= host.c_str());
+    CHECK(host_end >= host.c_str());
     char host_without_scope[GRPC_INET6_ADDRSTRLEN + 1];
     size_t host_without_scope_len =
         static_cast<size_t>(host_end - host.c_str());
@@ -298,6 +366,9 @@ bool grpc_parse_uri(const grpc_core::URI& uri,
   }
   if (uri.scheme() == "unix-abstract") {
     return grpc_parse_unix_abstract(uri, resolved_addr);
+  }
+  if (uri.scheme() == "vsock") {
+    return grpc_parse_vsock(uri, resolved_addr);
   }
   if (uri.scheme() == "ipv4") {
     return grpc_parse_ipv4(uri, resolved_addr);

@@ -18,13 +18,17 @@
 
 #include "src/core/lib/gprpp/ref_counted_ptr.h"
 
+#include <memory>
+
+#include "absl/container/flat_hash_set.h"
+#include "absl/log/check.h"
 #include "gtest/gtest.h"
 
 #include <grpc/support/log.h>
 
 #include "src/core/lib/gprpp/dual_ref_counted.h"
 #include "src/core/lib/gprpp/ref_counted.h"
-#include "test/core/util/test_config.h"
+#include "test/core/test_util/test_config.h"
 
 namespace grpc_core {
 namespace testing {
@@ -191,6 +195,9 @@ TEST(RefCountedPtr, RefCountedWithTracing) {
   RefCountedPtr<FooWithTracing> foo(new FooWithTracing());
   RefCountedPtr<FooWithTracing> foo2 = foo->Ref(DEBUG_LOCATION, "foo");
   foo2.release();
+  RefCountedPtr<FooWithTracing> foo3 = foo.Ref(DEBUG_LOCATION, "foo");
+  foo3.release();
+  foo->Unref(DEBUG_LOCATION, "foo");
   foo->Unref(DEBUG_LOCATION, "foo");
 }
 
@@ -237,22 +244,25 @@ TEST(RefCountedPtr, EqualityWithSubclass) {
   EXPECT_EQ(b, s);
 }
 
-void FunctionTakingBaseClass(RefCountedPtr<BaseClass> p) {
-  p.reset();  // To appease clang-tidy.
-}
+void FunctionTakingBaseClass(RefCountedPtr<BaseClass>) {}
 
 TEST(RefCountedPtr, CanPassSubclassToFunctionExpectingBaseClass) {
   RefCountedPtr<Subclass> p = MakeRefCounted<Subclass>();
   FunctionTakingBaseClass(p);
 }
 
-void FunctionTakingSubclass(RefCountedPtr<Subclass> p) {
-  p.reset();  // To appease clang-tidy.
-}
+void FunctionTakingSubclass(RefCountedPtr<Subclass>) {}
 
 TEST(RefCountedPtr, CanPassSubclassToFunctionExpectingSubclass) {
   RefCountedPtr<Subclass> p = MakeRefCounted<Subclass>();
   FunctionTakingSubclass(p);
+}
+
+TEST(RefCountedPtr, TakeAsSubclass) {
+  RefCountedPtr<BaseClass> p = MakeRefCounted<Subclass>();
+  auto s = p.TakeAsSubclass<Subclass>();
+  EXPECT_EQ(p.get(), nullptr);
+  EXPECT_NE(s.get(), nullptr);
 }
 
 //
@@ -265,9 +275,9 @@ class Bar : public DualRefCounted<Bar> {
 
   explicit Bar(int value) : value_(value) {}
 
-  ~Bar() override { GPR_ASSERT(shutting_down_); }
+  ~Bar() override { CHECK(shutting_down_); }
 
-  void Orphan() override { shutting_down_ = true; }
+  void Orphaned() override { shutting_down_ = true; }
 
   int value() const { return value_; }
 
@@ -421,9 +431,9 @@ class BarWithTracing : public DualRefCounted<BarWithTracing> {
  public:
   BarWithTracing() : DualRefCounted("BarWithTracing") {}
 
-  ~BarWithTracing() override { GPR_ASSERT(shutting_down_); }
+  ~BarWithTracing() override { CHECK(shutting_down_); }
 
-  void Orphan() override { shutting_down_ = true; }
+  void Orphaned() override { shutting_down_ = true; }
 
  private:
   bool shutting_down_ = false;
@@ -434,6 +444,9 @@ TEST(WeakRefCountedPtr, RefCountedWithTracing) {
   WeakRefCountedPtr<BarWithTracing> bar = bar_strong->WeakRef();
   WeakRefCountedPtr<BarWithTracing> bar2 = bar->WeakRef(DEBUG_LOCATION, "bar");
   bar2.release();
+  WeakRefCountedPtr<BarWithTracing> bar3 = bar.WeakRef(DEBUG_LOCATION, "bar");
+  bar3.release();
+  bar->WeakUnref(DEBUG_LOCATION, "bar");
   bar->WeakUnref(DEBUG_LOCATION, "bar");
 }
 
@@ -441,9 +454,9 @@ class WeakBaseClass : public DualRefCounted<WeakBaseClass> {
  public:
   WeakBaseClass() {}
 
-  ~WeakBaseClass() override { GPR_ASSERT(shutting_down_); }
+  ~WeakBaseClass() override { CHECK(shutting_down_); }
 
-  void Orphan() override { shutting_down_ = true; }
+  void Orphaned() override { shutting_down_ = true; }
 
  private:
   bool shutting_down_ = false;
@@ -463,7 +476,7 @@ TEST(WeakRefCountedPtr, CopyAssignFromWeakSubclass) {
   RefCountedPtr<WeakSubclass> strong(new WeakSubclass());
   WeakRefCountedPtr<WeakBaseClass> b;
   EXPECT_EQ(nullptr, b.get());
-  WeakRefCountedPtr<WeakSubclass> s = strong->WeakRef();
+  WeakRefCountedPtr<WeakSubclass> s = strong->WeakRefAsSubclass<WeakSubclass>();
   b = s;
   EXPECT_NE(nullptr, b.get());
 }
@@ -472,7 +485,7 @@ TEST(WeakRefCountedPtr, MoveAssignFromWeakSubclass) {
   RefCountedPtr<WeakSubclass> strong(new WeakSubclass());
   WeakRefCountedPtr<WeakBaseClass> b;
   EXPECT_EQ(nullptr, b.get());
-  WeakRefCountedPtr<WeakSubclass> s = strong->WeakRef();
+  WeakRefCountedPtr<WeakSubclass> s = strong->WeakRefAsSubclass<WeakSubclass>();
   b = std::move(s);
   EXPECT_NE(nullptr, b.get());
 }
@@ -481,7 +494,7 @@ TEST(WeakRefCountedPtr, ResetFromWeakSubclass) {
   RefCountedPtr<WeakSubclass> strong(new WeakSubclass());
   WeakRefCountedPtr<WeakBaseClass> b;
   EXPECT_EQ(nullptr, b.get());
-  b.reset(strong->WeakRef().release());
+  b.reset(strong->WeakRefAsSubclass<WeakSubclass>().release());
   EXPECT_NE(nullptr, b.get());
 }
 
@@ -491,24 +504,87 @@ TEST(WeakRefCountedPtr, EqualityWithWeakSubclass) {
   EXPECT_EQ(b, strong.get());
 }
 
-void FunctionTakingWeakBaseClass(WeakRefCountedPtr<WeakBaseClass> p) {
-  p.reset();  // To appease clang-tidy.
-}
+void FunctionTakingWeakBaseClass(WeakRefCountedPtr<WeakBaseClass>) {}
 
 TEST(WeakRefCountedPtr, CanPassWeakSubclassToFunctionExpectingWeakBaseClass) {
   RefCountedPtr<WeakSubclass> strong(new WeakSubclass());
-  WeakRefCountedPtr<WeakSubclass> p = strong->WeakRef();
+  WeakRefCountedPtr<WeakSubclass> p = strong->WeakRefAsSubclass<WeakSubclass>();
   FunctionTakingWeakBaseClass(p);
 }
 
-void FunctionTakingWeakSubclass(WeakRefCountedPtr<WeakSubclass> p) {
-  p.reset();  // To appease clang-tidy.
-}
+void FunctionTakingWeakSubclass(WeakRefCountedPtr<WeakSubclass>) {}
 
 TEST(WeakRefCountedPtr, CanPassWeakSubclassToFunctionExpectingWeakSubclass) {
   RefCountedPtr<WeakSubclass> strong(new WeakSubclass());
-  WeakRefCountedPtr<WeakSubclass> p = strong->WeakRef();
+  WeakRefCountedPtr<WeakSubclass> p = strong->WeakRefAsSubclass<WeakSubclass>();
   FunctionTakingWeakSubclass(p);
+}
+
+TEST(WeakRefCountedPtr, TakeAsSubclass) {
+  RefCountedPtr<WeakBaseClass> strong = MakeRefCounted<WeakSubclass>();
+  WeakRefCountedPtr<WeakBaseClass> p = strong->WeakRef();
+  WeakRefCountedPtr<WeakSubclass> s = p.TakeAsSubclass<WeakSubclass>();
+  EXPECT_EQ(p.get(), nullptr);
+  EXPECT_NE(s.get(), nullptr);
+}
+
+//
+// tests for absl hash integration
+//
+
+TEST(AbslHashIntegration, RefCountedPtr) {
+  absl::flat_hash_set<RefCountedPtr<Foo>> set;
+  auto p = MakeRefCounted<Foo>(5);
+  set.insert(p);
+  auto it = set.find(p);
+  ASSERT_NE(it, set.end());
+  EXPECT_EQ(*it, p);
+}
+
+TEST(AbslHashIntegration, WeakRefCountedPtr) {
+  absl::flat_hash_set<WeakRefCountedPtr<Bar>> set;
+  auto p = MakeRefCounted<Bar>(5);
+  auto q = p->WeakRef();
+  set.insert(q);
+  auto it = set.find(q);
+  ASSERT_NE(it, set.end());
+  EXPECT_EQ(*it, q);
+}
+
+TEST(AbslHashIntegration, RefCountedPtrHeterogenousLookup) {
+  absl::flat_hash_set<RefCountedPtr<Bar>, RefCountedPtrHash<Bar>,
+                      RefCountedPtrEq<Bar>>
+      set;
+  auto p = MakeRefCounted<Bar>(5);
+  set.insert(p);
+  auto it = set.find(p);
+  ASSERT_NE(it, set.end());
+  EXPECT_EQ(*it, p);
+  auto q = p->WeakRef();
+  it = set.find(q);
+  ASSERT_NE(it, set.end());
+  EXPECT_EQ(*it, p);
+  it = set.find(p.get());
+  ASSERT_NE(it, set.end());
+  EXPECT_EQ(*it, p);
+}
+
+TEST(AbslHashIntegration, WeakRefCountedPtrHeterogenousLookup) {
+  absl::flat_hash_set<WeakRefCountedPtr<Bar>, RefCountedPtrHash<Bar>,
+                      RefCountedPtrEq<Bar>>
+      set;
+  auto p = MakeRefCounted<Bar>(5);
+  auto q = p->WeakRef();
+  set.insert(q);
+  auto it = set.find(q);
+  ASSERT_NE(it, set.end());
+  EXPECT_EQ(*it, q);
+  it = set.find(p);
+  ASSERT_NE(it, set.end());
+  EXPECT_EQ(*it, q);
+  it = set.find(p.get());
+  ASSERT_NE(it, set.end());
+  EXPECT_EQ(*it, q);
 }
 
 }  // namespace

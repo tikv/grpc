@@ -19,10 +19,9 @@
 #ifndef GRPC_SRC_CPP_EXT_FILTERS_CENSUS_OPEN_CENSUS_CALL_TRACER_H
 #define GRPC_SRC_CPP_EXT_FILTERS_CENSUS_OPEN_CENSUS_CALL_TRACER_H
 
-#include <grpc/support/port_platform.h>
-
 #include <stdint.h>
 
+#include <memory>
 #include <string>
 
 #include "absl/base/thread_annotations.h"
@@ -34,11 +33,13 @@
 #include "opencensus/trace/span_id.h"
 #include "opencensus/trace/trace_id.h"
 
+#include <grpc/support/port_platform.h>
 #include <grpc/support/time.h>
 #include <grpcpp/opencensus.h>
 
 #include "src/core/lib/channel/call_tracer.h"
 #include "src/core/lib/channel/context.h"
+#include "src/core/lib/channel/tcp_tracer.h"
 #include "src/core/lib/gprpp/sync.h"
 #include "src/core/lib/iomgr/error.h"
 #include "src/core/lib/resource_quota/arena.h"
@@ -99,6 +100,10 @@ class OpenCensusCallTracer : public grpc_core::ClientCallTracer {
     void RecordCancel(grpc_error_handle cancel_error) override;
     void RecordEnd(const gpr_timespec& /*latency*/) override;
     void RecordAnnotation(absl::string_view annotation) override;
+    void RecordAnnotation(const Annotation& annotation) override;
+    std::shared_ptr<grpc_core::TcpTracerInterface> StartNewTcpTrace() override;
+    void SetOptionalLabel(OptionalLabelKey,
+                          grpc_core::RefCountedStringValue) override {}
 
     experimental::CensusContext* context() { return &context_; }
 
@@ -136,6 +141,7 @@ class OpenCensusCallTracer : public grpc_core::ClientCallTracer {
   OpenCensusCallAttemptTracer* StartNewAttempt(
       bool is_transparent_retry) override;
   void RecordAnnotation(absl::string_view annotation) override;
+  void RecordAnnotation(const Annotation& annotation) override;
 
   // APIs to record API call latency
   void RecordApiLatency(absl::Duration api_latency,

@@ -15,12 +15,12 @@
 #ifndef GRPC_SRC_CORE_LIB_PROMISE_WAIT_SET_H
 #define GRPC_SRC_CORE_LIB_PROMISE_WAIT_SET_H
 
-#include <grpc/support/port_platform.h>
-
 #include <utility>
 
 #include "absl/container/flat_hash_set.h"
 #include "absl/hash/hash.h"
+
+#include <grpc/support/port_platform.h>
 
 #include "src/core/lib/promise/activity.h"
 #include "src/core/lib/promise/poll.h"
@@ -64,7 +64,15 @@ class WaitSet final {
   };
 
   GRPC_MUST_USE_RESULT WakeupSet TakeWakeupSet() {
-    return WakeupSet(std::move(pending_));
+    auto ret = WakeupSet(std::move(pending_));
+    pending_.clear();  // reinitialize after move.
+    return ret;
+  }
+
+  void WakeupAsync() {
+    while (!pending_.empty()) {
+      pending_.extract(pending_.begin()).value().WakeupAsync();
+    }
   }
 
  private:

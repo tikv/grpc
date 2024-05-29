@@ -19,6 +19,8 @@
 #ifndef GRPC_TEST_CORE_TSI_TRANSPORT_SECURITY_TEST_LIB_H
 #define GRPC_TEST_CORE_TSI_TRANSPORT_SECURITY_TEST_LIB_H
 
+#include <openssl/x509v3.h>
+
 #include <grpc/support/sync.h>
 
 #include "src/core/tsi/transport_security_interface.h"
@@ -227,5 +229,21 @@ void tsi_test_do_round_trip(tsi_test_fixture* fixture);
 // This method performs the above round trip test without doing handshakes.
 void tsi_test_frame_protector_do_round_trip_no_handshake(
     tsi_test_frame_protector_fixture* fixture);
+
+struct SelfSignedCertificateOptions {
+  std::string common_name;
+  std::string organization;
+  std::string organizational_unit;
+};
+
+// Returns a PEM-encoded self-signed certificate.
+std::string GenerateSelfSignedCertificate(
+    const SelfSignedCertificateOptions& options);
+
+// Returns the OpenSSL representation of a PEM cert.
+X509* ReadPemCert(absl::string_view pem_cert);
+
+// Returns the OpenSSL representation of a CRL.
+X509_CRL* ReadCrl(absl::string_view crl_pem);
 
 #endif  // GRPC_TEST_CORE_TSI_TRANSPORT_SECURITY_TEST_LIB_H

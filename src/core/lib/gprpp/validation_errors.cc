@@ -12,17 +12,16 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include <grpc/support/port_platform.h>
-
 #include "src/core/lib/gprpp/validation_errors.h"
 
-#include <algorithm>
 #include <utility>
 
 #include "absl/status/status.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_join.h"
 #include "absl/strings/strip.h"
+
+#include <grpc/support/port_platform.h>
 
 namespace grpc_core {
 

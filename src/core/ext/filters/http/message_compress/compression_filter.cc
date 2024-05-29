@@ -19,12 +19,10 @@
 #include <inttypes.h>
 
 #include <functional>
-#include <initializer_list>
 #include <memory>
-#include <string>
 #include <utility>
 
-#include "absl/meta/type_traits.h"
+#include "absl/log/check.h"
 #include "absl/status/status.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
@@ -32,6 +30,7 @@
 
 #include <grpc/compression.h>
 #include <grpc/grpc.h>
+#include <grpc/impl/channel_arg_names.h>
 #include <grpc/impl/compression_types.h>
 #include <grpc/support/log.h>
 
@@ -48,7 +47,6 @@
 #include "src/core/lib/promise/context.h"
 #include "src/core/lib/promise/latch.h"
 #include "src/core/lib/promise/pipe.h"
-#include "src/core/lib/promise/poll.h"
 #include "src/core/lib/promise/prioritized_race.h"
 #include "src/core/lib/resource_quota/arena.h"
 #include "src/core/lib/slice/slice_buffer.h"
@@ -58,6 +56,11 @@
 #include "src/core/lib/transport/transport.h"
 
 namespace grpc_core {
+
+const NoInterceptor ServerCompressionFilter::Call::OnServerTrailingMetadata;
+const NoInterceptor ServerCompressionFilter::Call::OnFinalize;
+const NoInterceptor ClientCompressionFilter::Call::OnServerTrailingMetadata;
+const NoInterceptor ClientCompressionFilter::Call::OnFinalize;
 
 const grpc_channel_filter ClientCompressionFilter::kFilter =
     MakePromiseBasedFilter<ClientCompressionFilter, FilterEndpoint::kClient,
@@ -70,17 +73,17 @@ const grpc_channel_filter ServerCompressionFilter::kFilter =
                                kFilterExaminesInboundMessages |
                                kFilterExaminesOutboundMessages>("compression");
 
-absl::StatusOr<ClientCompressionFilter> ClientCompressionFilter::Create(
-    const ChannelArgs& args, ChannelFilter::Args) {
-  return ClientCompressionFilter(args);
+absl::StatusOr<std::unique_ptr<ClientCompressionFilter>>
+ClientCompressionFilter::Create(const ChannelArgs& args, ChannelFilter::Args) {
+  return std::make_unique<ClientCompressionFilter>(args);
 }
 
-absl::StatusOr<ServerCompressionFilter> ServerCompressionFilter::Create(
-    const ChannelArgs& args, ChannelFilter::Args) {
-  return ServerCompressionFilter(args);
+absl::StatusOr<std::unique_ptr<ServerCompressionFilter>>
+ServerCompressionFilter::Create(const ChannelArgs& args, ChannelFilter::Args) {
+  return std::make_unique<ServerCompressionFilter>(args);
 }
 
-CompressionFilter::CompressionFilter(const ChannelArgs& args)
+ChannelCompression::ChannelCompression(const ChannelArgs& args)
     : max_recv_size_(GetMaxRecvSizeFromChannelArgs(args)),
       message_size_service_config_parser_index_(
           MessageSizeParser::ParserIndex()),
@@ -95,8 +98,8 @@ CompressionFilter::CompressionFilter(const ChannelArgs& args)
           args.GetBool(GRPC_ARG_ENABLE_PER_MESSAGE_DECOMPRESSION)
               .value_or(true)),
       min_message_size_to_compress_(
-        args.GetInt(GRPC_ARG_MIN_MESSAGE_SIZE_TO_COMPRESS).value_or(0)),
-      compression_options_(grpc_core::MakeCompressionOptions(args)) {
+          args.GetInt(GRPC_ARG_MIN_MESSAGE_SIZE_TO_COMPRESS).value_or(0)),
+      compression_options_(grpc_core::GzipCompressionOptionsFromChannelArgs(args)) {
   // Make sure the default is enabled.
   if (!enabled_compression_algorithms_.IsSet(default_compression_algorithm_)) {
     const char* name;
@@ -111,7 +114,7 @@ CompressionFilter::CompressionFilter(const ChannelArgs& args)
   }
 }
 
-MessageHandle CompressionFilter::CompressMessage(
+MessageHandle ChannelCompression::CompressMessage(
     MessageHandle message, grpc_compression_algorithm algorithm) const {
   if (GRPC_TRACE_FLAG_ENABLED(grpc_compression_trace)) {
     gpr_log(GPR_INFO, "CompressMessage: len=%" PRIdPTR " alg=%d flags=%d",
@@ -136,7 +139,7 @@ MessageHandle CompressionFilter::CompressMessage(
   SliceBuffer tmp;
   SliceBuffer* payload = message->payload();
   bool did_compress = grpc_msg_compress(algorithm, payload->c_slice_buffer(),
-                                        tmp.c_slice_buffer(), compression_options_.get());
+                                        tmp.c_slice_buffer(), compression_options_);
   // If we achieved compression send it as compressed, otherwise send it as (to
   // avoid spending cycles on the receiver decompressing).
   if (did_compress) {
@@ -146,7 +149,7 @@ MessageHandle CompressionFilter::CompressMessage(
       const size_t after_size = tmp.Length();
       const float savings_ratio = 1.0f - static_cast<float>(after_size) /
                                              static_cast<float>(before_size);
-      GPR_ASSERT(grpc_compression_algorithm_name(algorithm, &algo_name));
+      CHECK(grpc_compression_algorithm_name(algorithm, &algo_name));
       gpr_log(GPR_INFO,
               "Compressed[%s] %" PRIuPTR " bytes vs. %" PRIuPTR
               " bytes (%.2f%% savings)",
@@ -160,7 +163,7 @@ MessageHandle CompressionFilter::CompressMessage(
   } else {
     if (GRPC_TRACE_FLAG_ENABLED(grpc_compression_trace)) {
       const char* algo_name;
-      GPR_ASSERT(grpc_compression_algorithm_name(algorithm, &algo_name));
+      CHECK(grpc_compression_algorithm_name(algorithm, &algo_name));
       gpr_log(GPR_INFO,
               "Algorithm '%s' enabled but decided not to compress. Input size: "
               "%" PRIuPTR,
@@ -170,8 +173,8 @@ MessageHandle CompressionFilter::CompressMessage(
   return message;
 }
 
-absl::StatusOr<MessageHandle> CompressionFilter::DecompressMessage(
-    MessageHandle message, DecompressArgs args) const {
+absl::StatusOr<MessageHandle> ChannelCompression::DecompressMessage(
+    bool is_client, MessageHandle message, DecompressArgs args) const {
   if (GRPC_TRACE_FLAG_ENABLED(grpc_compression_trace)) {
     gpr_log(GPR_INFO, "DecompressMessage: len=%" PRIdPTR " max=%d alg=%d",
             message->payload()->Length(),
@@ -188,8 +191,9 @@ absl::StatusOr<MessageHandle> CompressionFilter::DecompressMessage(
       message->payload()->Length() >
           static_cast<size_t>(*args.max_recv_message_length)) {
     return absl::ResourceExhaustedError(absl::StrFormat(
-        "Received message larger than max (%u vs. %d)",
-        message->payload()->Length(), *args.max_recv_message_length));
+        "%s: Received message larger than max (%u vs. %d)",
+        is_client ? "CLIENT" : "SERVER", message->payload()->Length(),
+        *args.max_recv_message_length));
   }
   // Check if decompression is enabled (if not, we can just pass the message
   // up).
@@ -215,7 +219,7 @@ absl::StatusOr<MessageHandle> CompressionFilter::DecompressMessage(
   return std::move(message);
 }
 
-grpc_compression_algorithm CompressionFilter::HandleOutgoingMetadata(
+grpc_compression_algorithm ChannelCompression::HandleOutgoingMetadata(
     grpc_metadata_batch& outgoing_metadata) {
   const auto algorithm = outgoing_metadata.Take(GrpcInternalEncodingRequest())
                              .value_or(default_compression_algorithm());
@@ -228,7 +232,7 @@ grpc_compression_algorithm CompressionFilter::HandleOutgoingMetadata(
   return algorithm;
 }
 
-CompressionFilter::DecompressArgs CompressionFilter::HandleIncomingMetadata(
+ChannelCompression::DecompressArgs ChannelCompression::HandleIncomingMetadata(
     const grpc_metadata_batch& incoming_metadata) {
   // Configure max receive size.
   auto max_recv_message_length = max_recv_size_;
@@ -239,89 +243,59 @@ CompressionFilter::DecompressArgs CompressionFilter::HandleIncomingMetadata(
   if (limits != nullptr && limits->max_recv_size().has_value() &&
       (!max_recv_message_length.has_value() ||
        *limits->max_recv_size() < *max_recv_message_length)) {
-    max_recv_message_length = *limits->max_recv_size();
+    max_recv_message_length = limits->max_recv_size();
   }
   return DecompressArgs{incoming_metadata.get(GrpcEncodingMetadata())
                             .value_or(GRPC_COMPRESS_NONE),
                         max_recv_message_length};
 }
 
-ArenaPromise<ServerMetadataHandle> ClientCompressionFilter::MakeCallPromise(
-    CallArgs call_args, NextPromiseFactory next_promise_factory) {
-  auto compression_algorithm =
-      HandleOutgoingMetadata(*call_args.client_initial_metadata);
-  call_args.client_to_server_messages->InterceptAndMap(
-      [compression_algorithm,
-       this](MessageHandle message) -> absl::optional<MessageHandle> {
-        return CompressMessage(std::move(message), compression_algorithm);
-      });
-  auto* decompress_args = GetContext<Arena>()->New<DecompressArgs>(
-      DecompressArgs{GRPC_COMPRESS_ALGORITHMS_COUNT, absl::nullopt});
-  auto* decompress_err =
-      GetContext<Arena>()->New<Latch<ServerMetadataHandle>>();
-  call_args.server_initial_metadata->InterceptAndMap(
-      [decompress_args, this](ServerMetadataHandle server_initial_metadata)
-          -> absl::optional<ServerMetadataHandle> {
-        if (server_initial_metadata == nullptr) return absl::nullopt;
-        *decompress_args = HandleIncomingMetadata(*server_initial_metadata);
-        return std::move(server_initial_metadata);
-      });
-  call_args.server_to_client_messages->InterceptAndMap(
-      [decompress_err, decompress_args,
-       this](MessageHandle message) -> absl::optional<MessageHandle> {
-        auto r = DecompressMessage(std::move(message), *decompress_args);
-        if (!r.ok()) {
-          decompress_err->Set(ServerMetadataFromStatus(r.status()));
-          return absl::nullopt;
-        }
-        return std::move(*r);
-      });
-  // Run the next filter, and race it with getting an error from decompression.
-  return PrioritizedRace(decompress_err->Wait(),
-                         next_promise_factory(std::move(call_args)));
+void ClientCompressionFilter::Call::OnClientInitialMetadata(
+    ClientMetadata& md, ClientCompressionFilter* filter) {
+  compression_algorithm_ =
+      filter->compression_engine_.HandleOutgoingMetadata(md);
 }
 
-ArenaPromise<ServerMetadataHandle> ServerCompressionFilter::MakeCallPromise(
-    CallArgs call_args, NextPromiseFactory next_promise_factory) {
-  auto decompress_args =
-      HandleIncomingMetadata(*call_args.client_initial_metadata);
-  auto* decompress_err =
-      GetContext<Arena>()->New<Latch<ServerMetadataHandle>>();
-  call_args.client_to_server_messages->InterceptAndMap(
-      [decompress_err, decompress_args,
-       this](MessageHandle message) -> absl::optional<MessageHandle> {
-        auto r = DecompressMessage(std::move(message), decompress_args);
-        if (grpc_call_trace.enabled()) {
-          gpr_log(GPR_DEBUG, "%s[compression] DecompressMessage returned %s",
-                  Activity::current()->DebugTag().c_str(),
-                  r.status().ToString().c_str());
-        }
-        if (!r.ok()) {
-          decompress_err->Set(ServerMetadataFromStatus(r.status()));
-          return absl::nullopt;
-        }
-        return std::move(*r);
-      });
-  auto* compression_algorithm =
-      GetContext<Arena>()->New<grpc_compression_algorithm>();
-  call_args.server_initial_metadata->InterceptAndMap(
-      [this, compression_algorithm](ServerMetadataHandle md) {
-        if (grpc_call_trace.enabled()) {
-          gpr_log(GPR_INFO, "%s[compression] Write metadata",
-                  Activity::current()->DebugTag().c_str());
-        }
-        // Find the compression algorithm.
-        *compression_algorithm = HandleOutgoingMetadata(*md);
-        return md;
-      });
-  call_args.server_to_client_messages->InterceptAndMap(
-      [compression_algorithm,
-       this](MessageHandle message) -> absl::optional<MessageHandle> {
-        return CompressMessage(std::move(message), *compression_algorithm);
-      });
-  // Run the next filter, and race it with getting an error from decompression.
-  return PrioritizedRace(decompress_err->Wait(),
-                         next_promise_factory(std::move(call_args)));
+MessageHandle ClientCompressionFilter::Call::OnClientToServerMessage(
+    MessageHandle message, ClientCompressionFilter* filter) {
+  return filter->compression_engine_.CompressMessage(std::move(message),
+                                                     compression_algorithm_);
+}
+
+void ClientCompressionFilter::Call::OnServerInitialMetadata(
+    ServerMetadata& md, ClientCompressionFilter* filter) {
+  decompress_args_ = filter->compression_engine_.HandleIncomingMetadata(md);
+}
+
+absl::StatusOr<MessageHandle>
+ClientCompressionFilter::Call::OnServerToClientMessage(
+    MessageHandle message, ClientCompressionFilter* filter) {
+  return filter->compression_engine_.DecompressMessage(
+      /*is_client=*/true, std::move(message), decompress_args_);
+}
+
+void ServerCompressionFilter::Call::OnClientInitialMetadata(
+    ClientMetadata& md, ServerCompressionFilter* filter) {
+  decompress_args_ = filter->compression_engine_.HandleIncomingMetadata(md);
+}
+
+absl::StatusOr<MessageHandle>
+ServerCompressionFilter::Call::OnClientToServerMessage(
+    MessageHandle message, ServerCompressionFilter* filter) {
+  return filter->compression_engine_.DecompressMessage(
+      /*is_client=*/false, std::move(message), decompress_args_);
+}
+
+void ServerCompressionFilter::Call::OnServerInitialMetadata(
+    ServerMetadata& md, ServerCompressionFilter* filter) {
+  compression_algorithm_ =
+      filter->compression_engine_.HandleOutgoingMetadata(md);
+}
+
+MessageHandle ServerCompressionFilter::Call::OnServerToClientMessage(
+    MessageHandle message, ServerCompressionFilter* filter) {
+  return filter->compression_engine_.CompressMessage(std::move(message),
+                                                     compression_algorithm_);
 }
 
 }  // namespace grpc_core

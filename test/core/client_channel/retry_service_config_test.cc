@@ -14,13 +14,14 @@
 // limitations under the License.
 //
 
-#include "src/core/ext/filters/client_channel/retry_service_config.h"
+#include "src/core/client_channel/retry_service_config.h"
 
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "gtest/gtest.h"
 
 #include <grpc/grpc.h>
+#include <grpc/impl/channel_arg_names.h>
 #include <grpc/slice.h>
 #include <grpc/status.h>
 
@@ -28,10 +29,10 @@
 #include "src/core/lib/config/core_configuration.h"
 #include "src/core/lib/gprpp/ref_counted_ptr.h"
 #include "src/core/lib/gprpp/time.h"
-#include "src/core/lib/service_config/service_config.h"
-#include "src/core/lib/service_config/service_config_impl.h"
-#include "src/core/lib/service_config/service_config_parser.h"
-#include "test/core/util/test_config.h"
+#include "src/core/service_config/service_config.h"
+#include "src/core/service_config/service_config_impl.h"
+#include "src/core/service_config/service_config_parser.h"
+#include "test/core/test_util/test_config.h"
 
 namespace grpc_core {
 namespace testing {

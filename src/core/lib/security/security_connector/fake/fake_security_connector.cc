@@ -16,17 +16,15 @@
 //
 //
 
-#include <grpc/support/port_platform.h>
-
 #include "src/core/lib/security/security_connector/fake/fake_security_connector.h"
 
 #include <stdlib.h>
 #include <string.h>
 
-#include <initializer_list>
 #include <string>
 #include <utility>
 
+#include "absl/log/check.h"
 #include "absl/status/status.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
@@ -34,11 +32,14 @@
 #include "absl/types/optional.h"
 
 #include <grpc/grpc_security_constants.h>
+#include <grpc/impl/channel_arg_names.h>
 #include <grpc/support/alloc.h>
 #include <grpc/support/log.h>
+#include <grpc/support/port_platform.h>
 #include <grpc/support/string_util.h>
 
-#include "src/core/ext/filters/client_channel/lb_policy/grpclb/grpclb.h"
+#include "src/core/handshaker/handshaker.h"
+#include "src/core/handshaker/security/security_handshaker.h"
 #include "src/core/lib/channel/channel_args.h"
 #include "src/core/lib/gpr/string.h"
 #include "src/core/lib/gpr/useful.h"
@@ -56,8 +57,7 @@
 #include "src/core/lib/security/context/security_context.h"
 #include "src/core/lib/security/credentials/credentials.h"
 #include "src/core/lib/security/credentials/fake/fake_credentials.h"
-#include "src/core/lib/security/transport/security_handshaker.h"
-#include "src/core/lib/transport/handshaker.h"
+#include "src/core/load_balancing/grpclb/grpclb.h"
 #include "src/core/tsi/fake_transport_security.h"
 #include "src/core/tsi/transport_security_interface.h"
 
@@ -142,7 +142,7 @@ class grpc_fake_channel_security_connector final
 
  private:
   bool fake_check_target(const char* target, const char* set_str) const {
-    GPR_ASSERT(target != nullptr);
+    CHECK_NE(target, nullptr);
     char** set = nullptr;
     size_t set_size = 0;
     gpr_string_split(set_str, ",", &set, &set_size);

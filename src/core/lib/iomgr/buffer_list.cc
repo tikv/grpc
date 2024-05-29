@@ -16,11 +16,10 @@
 //
 //
 
-#include <grpc/support/port_platform.h>
-
 #include "src/core/lib/iomgr/buffer_list.h"
 
 #include <grpc/support/log.h>
+#include <grpc/support/port_platform.h>
 #include <grpc/support/time.h>
 
 #include "src/core/lib/gprpp/crash.h"
@@ -278,6 +277,8 @@ void TracedBufferList::ProcessTimestamp(struct sock_extended_err* serr,
       elem = elem->next_;
       continue;
     }
+    g_timestamps_callback(elem->arg_, &(elem->ts_),
+                          absl::DeadlineExceededError("Ack timed out"));
     if (prev != nullptr) {
       prev->next_ = elem->next_;
       delete elem;

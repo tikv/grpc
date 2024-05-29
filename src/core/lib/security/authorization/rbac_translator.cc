@@ -12,20 +12,18 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include <grpc/support/port_platform.h>
-
 #include "src/core/lib/security/authorization/rbac_translator.h"
 
 #include <stddef.h>
 
 #include <algorithm>
-#include <initializer_list>
 #include <map>
 #include <memory>
 #include <string>
 #include <utility>
 #include <vector>
 
+#include "absl/log/check.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/match.h"
@@ -37,6 +35,7 @@
 #include <grpc/grpc_audit_logging.h>
 #include <grpc/support/json.h>
 #include <grpc/support/log.h>
+#include <grpc/support/port_platform.h>
 
 #include "src/core/lib/gpr/useful.h"
 #include "src/core/lib/json/json.h"
@@ -423,7 +422,7 @@ ParseAuditLogger(const Json& json, size_t pos) {
 }
 
 absl::Status ParseAuditLoggingOptions(const Json& json, RbacPolicies* rbacs) {
-  GPR_ASSERT(rbacs != nullptr);
+  CHECK_NE(rbacs, nullptr);
   for (auto it = json.object().begin(); it != json.object().end(); ++it) {
     if (it->first == "audit_condition") {
       if (it->second.type() != Json::Type::kString) {
@@ -477,7 +476,7 @@ absl::Status ParseAuditLoggingOptions(const Json& json, RbacPolicies* rbacs) {
             // Parse again since it returns unique_ptr, but result should be ok
             // this time.
             auto result = ParseAuditLogger(loggers.at(i), i);
-            GPR_ASSERT(result.ok());
+            CHECK(result.ok());
             rbacs->deny_policy->logger_configs.push_back(
                 std::move(result.value()));
           }

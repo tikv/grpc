@@ -14,19 +14,20 @@
 // limitations under the License.
 //
 
-#include <grpc/support/port_platform.h>
-
 #include <string>
+
+#include <grpc/support/port_platform.h>
 
 // IWYU pragma: no_include <bits/struct_stat.h>
 
 #include "absl/status/status.h"
-#include "absl/strings/string_view.h"
 
 #ifdef GPR_POSIX_STAT
 
 #include <errno.h>
 #include <sys/stat.h>
+
+#include "absl/log/check.h"
 
 #include <grpc/support/log.h>
 
@@ -36,8 +37,8 @@
 namespace grpc_core {
 
 absl::Status GetFileModificationTime(const char* filename, time_t* timestamp) {
-  GPR_ASSERT(filename != nullptr);
-  GPR_ASSERT(timestamp != nullptr);
+  CHECK_NE(filename, nullptr);
+  CHECK_NE(timestamp, nullptr);
   struct stat buf;
   if (stat(filename, &buf) != 0) {
     std::string error_msg = StrError(errno);

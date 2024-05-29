@@ -29,6 +29,7 @@
 #include <unistd.h>
 
 #include "absl/container/flat_hash_map.h"
+#include "absl/log/check.h"
 #include "absl/strings/str_cat.h"
 
 #include <grpc/support/alloc.h>
@@ -51,6 +52,7 @@
 #include "src/core/lib/iomgr/tcp_posix.h"
 #include "src/core/lib/iomgr/timer.h"
 #include "src/core/lib/iomgr/unix_sockets_posix.h"
+#include "src/core/lib/iomgr/vsock.h"
 #include "src/core/lib/slice/slice_internal.h"
 
 extern grpc_core::TraceFlag grpc_tcp_trace;
@@ -101,7 +103,7 @@ static grpc_error_handle prepare_socket(
     const grpc_core::PosixTcpOptions& options) {
   grpc_error_handle err;
 
-  GPR_ASSERT(fd >= 0);
+  CHECK_GE(fd, 0);
 
   err = grpc_set_socket_nonblocking(fd, 1);
   if (!err.ok()) goto error;
@@ -111,10 +113,12 @@ static grpc_error_handle prepare_socket(
     err = grpc_set_socket_rcvbuf(fd, options.tcp_receive_buffer_size);
     if (!err.ok()) goto error;
   }
-  if (!grpc_is_unix_socket(addr)) {
+  if (!grpc_is_unix_socket(addr) && !grpc_is_vsock(addr)) {
     err = grpc_set_socket_low_latency(fd, 1);
     if (!err.ok()) goto error;
     err = grpc_set_socket_reuse_addr(fd, 1);
+    if (!err.ok()) goto error;
+    err = grpc_set_socket_dscp(fd, options.dscp);
     if (!err.ok()) goto error;
     err = grpc_set_socket_tcp_user_timeout(fd, options, true /* is_client */);
     if (!err.ok()) goto error;
@@ -184,7 +188,7 @@ static void on_writable(void* acp, grpc_error_handle error) {
   }
 
   gpr_mu_lock(&ac->mu);
-  GPR_ASSERT(ac->fd);
+  CHECK(ac->fd);
   fd = ac->fd;
   ac->fd = nullptr;
   bool connect_cancelled = ac->connect_cancelled;
@@ -271,7 +275,7 @@ finish:
     std::string str;
     bool ret = grpc_error_get_str(
         error, grpc_core::StatusStrProperty::kDescription, &str);
-    GPR_ASSERT(ret);
+    CHECK(ret);
     std::string description =
         absl::StrCat("Failed to connect to remote host: ", str);
     error = grpc_error_set_str(
@@ -333,6 +337,7 @@ int64_t grpc_tcp_client_create_from_prepared_fd(
     err = connect(fd, reinterpret_cast<const grpc_sockaddr*>(addr->addr),
                   addr->len);
   } while (err < 0 && errno == EINTR);
+  int connect_errno = (err < 0) ? errno : 0;
 
   auto addr_uri = grpc_sockaddr_to_uri(addr);
   if (!addr_uri.ok()) {
@@ -344,7 +349,7 @@ int64_t grpc_tcp_client_create_from_prepared_fd(
   std::string name = absl::StrCat("tcp-client:", addr_uri.value());
   grpc_fd* fdobj = grpc_fd_create(fd, name.c_str(), true);
   int64_t connection_id = 0;
-  if (errno == EWOULDBLOCK || errno == EINPROGRESS) {
+  if (connect_errno == EWOULDBLOCK || connect_errno == EINPROGRESS) {
     // Connection is still in progress.
     connection_id = g_connection_id.fetch_add(1, std::memory_order_acq_rel);
   }
@@ -356,10 +361,10 @@ int64_t grpc_tcp_client_create_from_prepared_fd(
     grpc_core::ExecCtx::Run(DEBUG_LOCATION, closure, absl::OkStatus());
     return 0;
   }
-  if (errno != EWOULDBLOCK && errno != EINPROGRESS) {
+  if (connect_errno != EWOULDBLOCK && connect_errno != EINPROGRESS) {
     // Connection already failed. Return 0 to discourage any cancellation
     // attempts.
-    grpc_error_handle error = GRPC_OS_ERROR(errno, "connect");
+    grpc_error_handle error = GRPC_OS_ERROR(connect_errno, "connect");
     error = grpc_error_set_str(
         error, grpc_core::StatusStrProperty::kTargetAddress, addr_uri.value());
     grpc_fd_orphan(fdobj, nullptr, nullptr, "tcp_client_connect_error");
@@ -442,7 +447,7 @@ static bool tcp_cancel_connect(int64_t connection_handle) {
     auto it = shard->pending_connections.find(connection_handle);
     if (it != shard->pending_connections.end()) {
       ac = it->second;
-      GPR_ASSERT(ac != nullptr);
+      CHECK_NE(ac, nullptr);
       // Trying to acquire ac->mu here would could cause a deadlock because
       // the on_writable method tries to acquire the two mutexes used
       // here in the reverse order. But we dont need to acquire ac->mu before

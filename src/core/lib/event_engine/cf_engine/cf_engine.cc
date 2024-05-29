@@ -15,13 +15,18 @@
 #include <grpc/support/port_platform.h>
 
 #ifdef GPR_APPLE
+#include <AvailabilityMacros.h>
+#ifdef AVAILABLE_MAC_OS_X_VERSION_10_12_AND_LATER
 
 #include <CoreFoundation/CoreFoundation.h>
+
+#include "absl/log/check.h"
 
 #include <grpc/support/cpu.h>
 
 #include "src/core/lib/event_engine/cf_engine/cf_engine.h"
 #include "src/core/lib/event_engine/cf_engine/cfstream_endpoint.h"
+#include "src/core/lib/event_engine/cf_engine/dns_service_resolver.h"
 #include "src/core/lib/event_engine/posix_engine/timer_manager.h"
 #include "src/core/lib/event_engine/tcp_socket_utils.h"
 #include "src/core/lib/event_engine/thread_pool/thread_pool.h"
@@ -65,7 +70,7 @@ CFEventEngine::~CFEventEngine() {
                 HandleToString(handle).c_str());
       }
     }
-    GPR_ASSERT(GPR_LIKELY(known_handles_.empty()));
+    CHECK(GPR_LIKELY(known_handles_.empty()));
     timer_manager_.Shutdown();
   }
   thread_pool_->Quiesce();
@@ -155,9 +160,15 @@ bool CFEventEngine::CancelConnectInternal(ConnectionHandle handle,
 
 bool CFEventEngine::IsWorkerThread() { grpc_core::Crash("unimplemented"); }
 
-std::unique_ptr<EventEngine::DNSResolver> CFEventEngine::GetDNSResolver(
-    const DNSResolver::ResolverOptions& /* options */) {
-  grpc_core::Crash("unimplemented");
+absl::StatusOr<std::unique_ptr<EventEngine::DNSResolver>>
+CFEventEngine::GetDNSResolver(const DNSResolver::ResolverOptions& options) {
+  if (!options.dns_server.empty()) {
+    return absl::InvalidArgumentError(
+        "CFEventEngine does not support custom DNS servers");
+  }
+
+  return std::make_unique<DNSServiceResolver>(
+      std::static_pointer_cast<CFEventEngine>(shared_from_this()));
 }
 
 void CFEventEngine::Run(EventEngine::Closure* closure) {
@@ -208,4 +219,5 @@ EventEngine::TaskHandle CFEventEngine::RunAfterInternal(
 }  // namespace experimental
 }  // namespace grpc_event_engine
 
+#endif  // AVAILABLE_MAC_OS_X_VERSION_10_12_AND_LATER
 #endif  // GPR_APPLE

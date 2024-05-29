@@ -23,11 +23,13 @@
 
 #include <gtest/gtest.h>
 
+#include "absl/log/check.h"
+
 #include <grpc/grpc.h>
 #include <grpc/support/log.h>
 
 #include "src/core/lib/gprpp/crash.h"
-#include "test/core/util/test_config.h"
+#include "test/core/test_util/test_config.h"
 
 namespace grpc_core {
 
@@ -49,7 +51,7 @@ class SessionTracker {
   tsi::SslSessionPtr NewSession(long id) {
     static int ex_data_id = SSL_SESSION_get_ex_new_index(
         0, nullptr, nullptr, nullptr, DestroyExData);
-    GPR_ASSERT(ex_data_id != -1);
+    CHECK_NE(ex_data_id, -1);
     // OpenSSL and different version of BoringSSL don't agree on API
     // so try both.
     tsi::SslSessionPtr session = NewSessionInternal(SSL_SESSION_new);
@@ -103,6 +105,7 @@ TEST(SslSessionCacheTest, LruCache) {
   {
     RefCountedPtr<tsi::SslSessionLRUCache> cache =
         tsi::SslSessionLRUCache::Create(3);
+    EXPECT_EQ(cache->Size(), 0);
     tsi::SslSessionPtr sess2 = tracker.NewSession(2);
     SSL_SESSION* sess2_ptr = sess2.get();
     cache->Put("first.dropbox.com", std::move(sess2));
@@ -141,6 +144,45 @@ TEST(SslSessionCacheTest, LruCache) {
   }
   // Cache destructor destroys all sessions.
   EXPECT_EQ(tracker.AliveCount(), 0);
+}
+
+TEST(SslSessionCacheTest, PutAndGet) {
+  // Set up an empty cache and an SSL session.
+  SSL_CTX* ssl_ctx = SSL_CTX_new(TLS_method());
+  tsi::SslSessionPtr ssl_session_ptr(SSL_SESSION_new(ssl_ctx));
+  RefCountedPtr<tsi::SslSessionLRUCache> cache =
+      tsi::SslSessionLRUCache::Create(1);
+  EXPECT_EQ(cache->Size(), 0);
+  // Put the SSL session in the cache.
+  cache->Put("foo.domain", std::move(ssl_session_ptr));
+  EXPECT_EQ(cache->Size(), 1);
+  // Get a copy of the SSL session from the cache.
+  EXPECT_EQ(cache->Size(), 1);
+  EXPECT_NE(cache->Get("foo.domain"), nullptr);
+  // Try to put a null SSL session in the cache and check that it was not
+  // successful.
+  cache->Put("foo.domain.2", /*session=*/nullptr);
+  EXPECT_EQ(cache->Size(), 1);
+  EXPECT_NE(cache->Get("foo.domain"), nullptr);
+  EXPECT_EQ(cache->Get("foo.domain.2"), nullptr);
+  // Cleanup.
+  SSL_CTX_free(ssl_ctx);
+}
+
+TEST(SslSessionCacheTest, CapacityZeroCache) {
+  // Set up an empty cache and an SSL session.
+  SSL_CTX* ssl_ctx = SSL_CTX_new(TLS_method());
+  tsi::SslSessionPtr ssl_session_ptr(SSL_SESSION_new(ssl_ctx));
+  RefCountedPtr<tsi::SslSessionLRUCache> cache =
+      tsi::SslSessionLRUCache::Create(0);
+  EXPECT_EQ(cache->Size(), 0);
+  // Try to put the SSL session in the cache and check that it was not
+  // successful.
+  cache->Put("foo.domain", std::move(ssl_session_ptr));
+  EXPECT_EQ(cache->Size(), 0);
+  EXPECT_EQ(cache->Get("foo.domain"), nullptr);
+  // Cleanup.
+  SSL_CTX_free(ssl_ctx);
 }
 
 }  // namespace

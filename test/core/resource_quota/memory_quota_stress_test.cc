@@ -36,7 +36,7 @@
 #include "src/core/lib/gprpp/sync.h"
 #include "src/core/lib/iomgr/exec_ctx.h"
 #include "src/core/lib/resource_quota/memory_quota.h"
-#include "test/core/util/test_config.h"
+#include "test/core/test_util/test_config.h"
 
 namespace grpc_core {
 
@@ -51,8 +51,7 @@ class StressTest {
     std::random_device g;
     std::uniform_int_distribution<size_t> dist(0, num_quotas - 1);
     for (size_t i = 0; i < num_allocators; ++i) {
-      allocators_.emplace_back(quotas_[dist(g)].CreateMemoryOwner(
-          absl::StrCat("allocator[", i, "]")));
+      allocators_.emplace_back(quotas_[dist(g)].CreateMemoryOwner());
     }
   }
 

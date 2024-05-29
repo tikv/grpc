@@ -20,6 +20,7 @@
 #include <thread>
 
 #include "absl/flags/flag.h"
+#include "absl/log/check.h"
 #include "absl/strings/str_split.h"
 
 #include <grpc/grpc.h>
@@ -27,7 +28,7 @@
 #include <grpc/support/log.h>
 
 #include "src/core/lib/gpr/string.h"
-#include "test/core/util/test_config.h"
+#include "test/core/test_util/test_config.h"
 #include "test/cpp/interop/client_helper.h"
 #include "test/cpp/interop/interop_client.h"
 #include "test/cpp/util/create_test_channel.h"
@@ -56,6 +57,14 @@ ABSL_FLAG(
 ABSL_FLAG(int32_t, soak_min_time_ms_between_rpcs, 0,
           "The minimum time in milliseconds between consecutive RPCs in a soak "
           "test (rpc_soak or channel_soak), useful for limiting QPS");
+ABSL_FLAG(
+    int32_t, soak_request_size, 271828,
+    "The request size in a soak RPC. "
+    "The default value is set based on the interop large unary test case.");
+ABSL_FLAG(
+    int32_t, soak_response_size, 314159,
+    "The response size in a soak RPCi. "
+    "The default value is set based on the interop large unary test case.");
 ABSL_FLAG(std::string, test_case, "rpc_soak",
           "Configure different test cases. Valid options are: "
           "rpc_soak: sends --soak_iterations large_unary RPCs; "
@@ -78,11 +87,11 @@ int main(int argc, char** argv) {
             "Number of entries in --server_uris %ld != number of entries in "
             "--credentials_types %ld",
             uris.size(), creds.size());
-    GPR_ASSERT(0);
+    CHECK(0);
   }
   if (uris.empty()) {
     gpr_log(GPR_ERROR, "--server_uris has zero entries");
-    GPR_ASSERT(0);
+    CHECK(0);
   }
   // construct and start clients
   std::vector<std::thread> threads;
@@ -99,18 +108,22 @@ int main(int argc, char** argv) {
             absl::GetFlag(FLAGS_soak_max_failures),
             absl::GetFlag(FLAGS_soak_per_iteration_max_acceptable_latency_ms),
             absl::GetFlag(FLAGS_soak_min_time_ms_between_rpcs),
-            absl::GetFlag(FLAGS_soak_overall_timeout_seconds));
+            absl::GetFlag(FLAGS_soak_overall_timeout_seconds),
+            absl::GetFlag(FLAGS_soak_request_size),
+            absl::GetFlag(FLAGS_soak_response_size));
       } else if (test_case == "channel_soak") {
         client.DoChannelSoakTest(
             uris[i], absl::GetFlag(FLAGS_soak_iterations),
             absl::GetFlag(FLAGS_soak_max_failures),
             absl::GetFlag(FLAGS_soak_per_iteration_max_acceptable_latency_ms),
             absl::GetFlag(FLAGS_soak_min_time_ms_between_rpcs),
-            absl::GetFlag(FLAGS_soak_overall_timeout_seconds));
+            absl::GetFlag(FLAGS_soak_overall_timeout_seconds),
+            absl::GetFlag(FLAGS_soak_request_size),
+            absl::GetFlag(FLAGS_soak_response_size));
       } else {
         gpr_log(GPR_ERROR,
                 "Invalid test case, must be either rpc_soak or channel_soak");
-        GPR_ASSERT(0);
+        CHECK(0);
       }
     }));
   }

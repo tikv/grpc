@@ -28,7 +28,7 @@
 
 #include "src/core/lib/iomgr/exec_ctx.h"
 #include "src/core/lib/slice/slice.h"
-#include "test/core/util/test_config.h"
+#include "test/core/test_util/test_config.h"
 
 namespace grpc_core {
 namespace {
@@ -123,7 +123,7 @@ TEST(HpackParserTableTest, ManyAdditions) {
             ParsedMetadata<grpc_metadata_batch>::FromSlicePair{},
             std::move(key_slice), std::move(value_slice),
             key.length() + value.length() + 32),
-        HpackParseResult()};
+        nullptr};
     ASSERT_TRUE(tbl.Add(std::move(memento)));
     AssertIndex(&tbl, 1 + hpack_constants::kLastStaticEntry, key.c_str(),
                 value.c_str());

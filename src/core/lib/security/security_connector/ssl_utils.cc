@@ -16,22 +16,27 @@
 //
 //
 
-#include <grpc/support/port_platform.h>
-
 #include "src/core/lib/security/security_connector/ssl_utils.h"
 
 #include <stdint.h>
 #include <string.h>
 
+#include <memory>
+#include <utility>
 #include <vector>
 
+#include "absl/log/check.h"
 #include "absl/strings/match.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_split.h"
 
+#include <grpc/credentials.h>
 #include <grpc/grpc.h>
+#include <grpc/grpc_crl_provider.h>
+#include <grpc/impl/channel_arg_names.h>
 #include <grpc/support/alloc.h>
 #include <grpc/support/log.h>
+#include <grpc/support/port_platform.h>
 #include <grpc/support/string_util.h>
 #include <grpc/support/sync.h>
 
@@ -40,8 +45,8 @@
 #include "src/core/lib/config/config_vars.h"
 #include "src/core/lib/gpr/useful.h"
 #include "src/core/lib/gprpp/host_port.h"
+#include "src/core/lib/gprpp/load_file.h"
 #include "src/core/lib/gprpp/ref_counted_ptr.h"
-#include "src/core/lib/iomgr/load_file.h"
 #include "src/core/lib/security/context/security_context.h"
 #include "src/core/lib/security/security_connector/load_system_roots.h"
 #include "src/core/tsi/ssl_transport_security.h"
@@ -187,7 +192,7 @@ absl::Status SslCheckCallHost(absl::string_view host,
 }  // namespace grpc_core
 
 const char** grpc_fill_alpn_protocol_strings(size_t* num_alpn_protocols) {
-  GPR_ASSERT(num_alpn_protocols != nullptr);
+  CHECK_NE(num_alpn_protocols, nullptr);
   *num_alpn_protocols = grpc_chttp2_num_alpn_versions();
   const char** alpn_protocol_strings = static_cast<const char**>(
       gpr_malloc(sizeof(const char*) * (*num_alpn_protocols)));
@@ -248,7 +253,7 @@ grpc_core::RefCountedPtr<grpc_auth_context> grpc_ssl_peer_to_auth_context(
   const char* peer_identity_property_name = nullptr;
 
   // The caller has checked the certificate type property.
-  GPR_ASSERT(peer->property_count >= 1);
+  CHECK_GE(peer->property_count, 1u);
   grpc_core::RefCountedPtr<grpc_auth_context> ctx =
       grpc_core::MakeRefCounted<grpc_auth_context>(nullptr);
   grpc_auth_context_add_cstring_property(
@@ -315,14 +320,14 @@ grpc_core::RefCountedPtr<grpc_auth_context> grpc_ssl_peer_to_auth_context(
     }
   }
   if (peer_identity_property_name != nullptr) {
-    GPR_ASSERT(grpc_auth_context_set_peer_identity_property_name(
-                   ctx.get(), peer_identity_property_name) == 1);
+    CHECK(grpc_auth_context_set_peer_identity_property_name(
+              ctx.get(), peer_identity_property_name) == 1);
   }
   // A valid SPIFFE certificate can only have exact one URI SAN field.
   if (has_spiffe_id) {
     if (uri_count == 1) {
-      GPR_ASSERT(spiffe_length > 0);
-      GPR_ASSERT(spiffe_data != nullptr);
+      CHECK_GT(spiffe_length, 0u);
+      CHECK_NE(spiffe_data, nullptr);
       grpc_auth_context_add_property(ctx.get(),
                                      GRPC_PEER_SPIFFE_ID_PROPERTY_NAME,
                                      spiffe_data, spiffe_length);
@@ -409,10 +414,11 @@ grpc_security_status grpc_ssl_tsi_client_handshaker_factory_init(
     tsi_tls_version max_tls_version, tsi_ssl_session_cache* ssl_session_cache,
     tsi::TlsSessionKeyLoggerCache::TlsSessionKeyLogger* tls_session_key_logger,
     const char* crl_directory,
+    std::shared_ptr<grpc_core::experimental::CrlProvider> crl_provider,
     tsi_ssl_client_handshaker_factory** handshaker_factory) {
   const char* root_certs;
   const tsi_ssl_root_certs_store* root_store;
-  if (pem_root_certs == nullptr) {
+  if (pem_root_certs == nullptr && !skip_server_certificate_verification) {
     gpr_log(GPR_INFO,
             "No root certificates specified; use ones stored in system default "
             "locations instead");
@@ -431,7 +437,6 @@ grpc_security_status grpc_ssl_tsi_client_handshaker_factory_init(
                            pem_key_cert_pair->private_key != nullptr &&
                            pem_key_cert_pair->cert_chain != nullptr;
   tsi_ssl_client_handshaker_options options;
-  GPR_DEBUG_ASSERT(root_certs != nullptr);
   options.pem_root_certs = root_certs;
   options.root_store = root_store;
   options.alpn_protocols =
@@ -447,6 +452,7 @@ grpc_security_status grpc_ssl_tsi_client_handshaker_factory_init(
   options.min_tls_version = min_tls_version;
   options.max_tls_version = max_tls_version;
   options.crl_directory = crl_directory;
+  options.crl_provider = std::move(crl_provider);
   const tsi_result result =
       tsi_create_ssl_client_handshaker_factory_with_options(&options,
                                                             handshaker_factory);
@@ -466,6 +472,7 @@ grpc_security_status grpc_ssl_tsi_server_handshaker_factory_init(
     tsi_tls_version min_tls_version, tsi_tls_version max_tls_version,
     tsi::TlsSessionKeyLoggerCache::TlsSessionKeyLogger* tls_session_key_logger,
     const char* crl_directory, bool send_client_ca_list,
+    std::shared_ptr<grpc_core::experimental::CrlProvider> crl_provider,
     tsi_ssl_server_handshaker_factory** handshaker_factory) {
   size_t num_alpn_protocols = 0;
   const char** alpn_protocol_strings =
@@ -483,6 +490,7 @@ grpc_security_status grpc_ssl_tsi_server_handshaker_factory_init(
   options.max_tls_version = max_tls_version;
   options.key_logger = tls_session_key_logger;
   options.crl_directory = crl_directory;
+  options.crl_provider = std::move(crl_provider);
   options.send_client_ca_list = send_client_ca_list;
   const tsi_result result =
       tsi_create_ssl_server_handshaker_factory_with_options(&options,
@@ -559,40 +567,49 @@ const char* DefaultSslRootStore::GetPemRootCerts() {
 }
 
 grpc_slice DefaultSslRootStore::ComputePemRootCerts() {
-  grpc_slice result = grpc_empty_slice();
+  Slice result;
   // First try to load the roots from the configuration.
-  auto default_root_certs_path = ConfigVars::Get().DefaultSslRootsFilePath();
+  std::string default_root_certs_path =
+      ConfigVars::Get().DefaultSslRootsFilePath();
   if (!default_root_certs_path.empty()) {
-    GRPC_LOG_IF_ERROR(
-        "load_file",
-        grpc_load_file(std::string(default_root_certs_path).c_str(), 1,
-                       &result));
+    auto slice =
+        LoadFile(default_root_certs_path, /*add_null_terminator=*/true);
+    if (!slice.ok()) {
+      gpr_log(GPR_ERROR, "error loading file %s: %s",
+              default_root_certs_path.c_str(),
+              slice.status().ToString().c_str());
+    } else {
+      result = std::move(*slice);
+    }
   }
   // Try overridden roots if needed.
   grpc_ssl_roots_override_result ovrd_res = GRPC_SSL_ROOTS_OVERRIDE_FAIL;
-  if (GRPC_SLICE_IS_EMPTY(result) && ssl_roots_override_cb != nullptr) {
+  if (result.empty() && ssl_roots_override_cb != nullptr) {
     char* pem_root_certs = nullptr;
     ovrd_res = ssl_roots_override_cb(&pem_root_certs);
     if (ovrd_res == GRPC_SSL_ROOTS_OVERRIDE_OK) {
-      GPR_ASSERT(pem_root_certs != nullptr);
-      result = grpc_slice_from_copied_buffer(
+      CHECK_NE(pem_root_certs, nullptr);
+      result = Slice::FromCopiedBuffer(
           pem_root_certs,
           strlen(pem_root_certs) + 1);  // nullptr terminator.
     }
     gpr_free(pem_root_certs);
   }
   // Try loading roots from OS trust store if flag is enabled.
-  if (GRPC_SLICE_IS_EMPTY(result) &&
-      !ConfigVars::Get().NotUseSystemSslRoots()) {
-    result = LoadSystemRootCerts();
+  if (result.empty() && !ConfigVars::Get().NotUseSystemSslRoots()) {
+    result = Slice(LoadSystemRootCerts());
   }
   // Fallback to roots manually shipped with gRPC.
-  if (GRPC_SLICE_IS_EMPTY(result) &&
-      ovrd_res != GRPC_SSL_ROOTS_OVERRIDE_FAIL_PERMANENTLY) {
-    GRPC_LOG_IF_ERROR("load_file",
-                      grpc_load_file(installed_roots_path, 1, &result));
+  if (result.empty() && ovrd_res != GRPC_SSL_ROOTS_OVERRIDE_FAIL_PERMANENTLY) {
+    auto slice = LoadFile(installed_roots_path, /*add_null_terminator=*/true);
+    if (!slice.ok()) {
+      gpr_log(GPR_ERROR, "error loading file %s: %s", installed_roots_path,
+              slice.status().ToString().c_str());
+    } else {
+      result = std::move(*slice);
+    }
   }
-  return result;
+  return result.TakeCSlice();
 }
 
 void DefaultSslRootStore::InitRootStore() {

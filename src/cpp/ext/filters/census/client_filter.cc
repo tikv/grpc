@@ -16,8 +16,6 @@
 //
 //
 
-#include <grpc/support/port_platform.h>
-
 #include "src/cpp/ext/filters/census/client_filter.h"
 
 #include <stddef.h>
@@ -25,12 +23,12 @@
 
 #include <algorithm>
 #include <functional>
-#include <initializer_list>
 #include <memory>
 #include <string>
 #include <utility>
 #include <vector>
 
+#include "absl/log/check.h"
 #include "absl/status/status.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
@@ -47,6 +45,7 @@
 
 #include <grpc/slice.h>
 #include <grpc/support/log.h>
+#include <grpc/support/port_platform.h>
 #include <grpc/support/time.h>
 #include <grpcpp/client_context.h>
 #include <grpcpp/opencensus.h>
@@ -55,7 +54,7 @@
 #include "src/core/lib/channel/channel_args.h"
 #include "src/core/lib/channel/channel_stack.h"
 #include "src/core/lib/channel/context.h"
-#include "src/core/lib/experiments/experiments.h"
+#include "src/core/lib/channel/tcp_tracer.h"
 #include "src/core/lib/gprpp/sync.h"
 #include "src/core/lib/promise/context.h"
 #include "src/core/lib/resource_quota/arena.h"
@@ -86,11 +85,13 @@ const grpc_channel_filter OpenCensusClientFilter::kFilter =
                                       grpc_core::FilterEndpoint::kClient, 0>(
         "opencensus_client");
 
-absl::StatusOr<OpenCensusClientFilter> OpenCensusClientFilter::Create(
-    const grpc_core::ChannelArgs& args, ChannelFilter::Args /*filter_args*/) {
+absl::StatusOr<std::unique_ptr<OpenCensusClientFilter>>
+OpenCensusClientFilter::Create(const grpc_core::ChannelArgs& args,
+                               ChannelFilter::Args /*filter_args*/) {
   bool observability_enabled =
       args.GetInt(GRPC_ARG_ENABLE_OBSERVABILITY).value_or(true);
-  return OpenCensusClientFilter(/*tracing_enabled=*/observability_enabled);
+  return std::make_unique<OpenCensusClientFilter>(
+      /*tracing_enabled=*/observability_enabled);
 }
 
 grpc_core::ArenaPromise<grpc_core::ServerMetadataHandle>
@@ -106,9 +107,8 @@ OpenCensusClientFilter::MakeCallPromise(
               call_context, path != nullptr ? path->Ref() : grpc_core::Slice(),
               grpc_core::GetContext<grpc_core::Arena>(),
               OpenCensusTracingEnabled() && tracing_enabled_);
-  GPR_DEBUG_ASSERT(
-      call_context[GRPC_CONTEXT_CALL_TRACER_ANNOTATION_INTERFACE].value ==
-      nullptr);
+  DCHECK(call_context[GRPC_CONTEXT_CALL_TRACER_ANNOTATION_INTERFACE].value ==
+         nullptr);
   call_context[GRPC_CONTEXT_CALL_TRACER_ANNOTATION_INTERFACE].value = tracer;
   call_context[GRPC_CONTEXT_CALL_TRACER_ANNOTATION_INTERFACE].destroy = nullptr;
   return next_promise_factory(std::move(call_args));
@@ -235,16 +235,6 @@ void OpenCensusCallTracer::OpenCensusCallAttemptTracer::
          {RpcClientRoundtripLatency(),
           absl::ToDoubleMilliseconds(absl::Now() - start_time_)}},
         tags);
-    if (grpc_core::IsTransportSuppliesClientLatencyEnabled()) {
-      if (transport_stream_stats != nullptr &&
-          gpr_time_cmp(transport_stream_stats->latency,
-                       gpr_inf_future(GPR_TIMESPAN)) != 0) {
-        double latency_ms = absl::ToDoubleMilliseconds(absl::Microseconds(
-            gpr_timespec_to_micros(transport_stream_stats->latency)));
-        ::opencensus::stats::Record({{RpcClientTransportLatency(), latency_ms}},
-                                    tags);
-      }
-    }
   }
 }
 
@@ -284,8 +274,32 @@ void OpenCensusCallTracer::OpenCensusCallAttemptTracer::RecordEnd(
 
 void OpenCensusCallTracer::OpenCensusCallAttemptTracer::RecordAnnotation(
     absl::string_view annotation) {
-  // If tracing is disabled, the following will be a no-op.
+  if (!context_.Span().IsRecording()) {
+    return;
+  }
   context_.AddSpanAnnotation(annotation, {});
+}
+
+void OpenCensusCallTracer::OpenCensusCallAttemptTracer::RecordAnnotation(
+    const Annotation& annotation) {
+  if (!context_.Span().IsRecording()) {
+    return;
+  }
+
+  switch (annotation.type()) {
+    // Annotations are expensive to create. We should only create it if the
+    // call is being sampled by default.
+    default:
+      if (IsSampled()) {
+        context_.AddSpanAnnotation(annotation.ToString(), {});
+      }
+      break;
+  }
+}
+
+std::shared_ptr<grpc_core::TcpTracerInterface>
+OpenCensusCallTracer::OpenCensusCallAttemptTracer::StartNewTcpTrace() {
+  return nullptr;
 }
 
 //
@@ -355,8 +369,26 @@ OpenCensusCallTracer::StartNewAttempt(bool is_transparent_retry) {
 }
 
 void OpenCensusCallTracer::RecordAnnotation(absl::string_view annotation) {
-  // If tracing is disabled, the following will be a no-op.
+  if (!context_.Span().IsRecording()) {
+    return;
+  }
   context_.AddSpanAnnotation(annotation, {});
+}
+
+void OpenCensusCallTracer::RecordAnnotation(const Annotation& annotation) {
+  if (!context_.Span().IsRecording()) {
+    return;
+  }
+
+  switch (annotation.type()) {
+    // Annotations are expensive to create. We should only create it if the
+    // call is being sampled by default.
+    default:
+      if (IsSampled()) {
+        context_.AddSpanAnnotation(annotation.ToString(), {});
+      }
+      break;
+  }
 }
 
 void OpenCensusCallTracer::RecordApiLatency(absl::Duration api_latency,
@@ -375,7 +407,7 @@ void OpenCensusCallTracer::RecordApiLatency(absl::Duration api_latency,
 
 CensusContext OpenCensusCallTracer::CreateCensusContextForCallAttempt() {
   if (!tracing_enabled_) return CensusContext(context_.tags());
-  GPR_DEBUG_ASSERT(context_.Context().IsValid());
+  DCHECK(context_.Context().IsValid());
   auto context = CensusContext(absl::StrCat("Attempt.", method_),
                                &(context_.Span()), context_.tags());
   grpc::internal::OpenCensusRegistry::Get()

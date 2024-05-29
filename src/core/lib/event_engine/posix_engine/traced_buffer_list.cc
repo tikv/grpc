@@ -12,8 +12,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include <grpc/support/port_platform.h>
-
 #include "src/core/lib/event_engine/posix_engine/traced_buffer_list.h"
 
 #include <stddef.h>
@@ -26,6 +24,7 @@
 #include "absl/functional/any_invocable.h"
 
 #include <grpc/support/log.h>
+#include <grpc/support/port_platform.h>
 #include <grpc/support/time.h>
 
 #include "src/core/lib/gprpp/sync.h"
@@ -279,6 +278,8 @@ void TracedBufferList::ProcessTimestamp(struct sock_extended_err* serr,
       elem = elem->next_;
       continue;
     }
+    g_timestamps_callback(elem->arg_, &(elem->ts_),
+                          absl::DeadlineExceededError("Ack timed out"));
     if (prev != nullptr) {
       prev->next_ = elem->next_;
       delete elem;

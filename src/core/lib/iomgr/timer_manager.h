@@ -19,9 +19,9 @@
 #ifndef GRPC_SRC_CORE_LIB_IOMGR_TIMER_MANAGER_H
 #define GRPC_SRC_CORE_LIB_IOMGR_TIMER_MANAGER_H
 
-#include <grpc/support/port_platform.h>
-
 #include <stdbool.h>
+
+#include <grpc/support/port_platform.h>
 
 // Timer Manager tries to keep only one thread waiting for the next timeout at
 // all times, and thus effectively preventing the thundering herd problem.
@@ -32,6 +32,8 @@ void grpc_timer_manager_shutdown(void);
 // enable/disable threading - must be called after grpc_timer_manager_init and
 // before grpc_timer_manager_shutdown
 void grpc_timer_manager_set_threading(bool enabled);
+// enable/disable threading - must be called before first grpc init
+void grpc_timer_manager_set_start_threaded(bool enabled);
 // explicitly perform one tick of the timer system - for when threading is
 // disabled
 void grpc_timer_manager_tick(void);

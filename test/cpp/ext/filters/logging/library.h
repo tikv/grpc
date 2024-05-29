@@ -30,6 +30,7 @@
 #include "gtest/gtest.h"
 
 #include <grpc++/grpc++.h>
+#include <grpcpp/opencensus.h>
 #include <grpcpp/support/status.h>
 
 #include "src/core/ext/filters/logging/logging_filter.h"
@@ -37,22 +38,12 @@
 #include "src/cpp/ext/gcp/observability_logging_sink.h"
 #include "src/proto/grpc/testing/echo.grpc.pb.h"
 #include "src/proto/grpc/testing/echo_messages.pb.h"
-#include "test/core/util/port.h"
-#include "test/core/util/test_config.h"
+#include "test/core/test_util/port.h"
+#include "test/core/test_util/test_config.h"
 #include "test/cpp/end2end/test_service_impl.h"
 
 namespace grpc {
 namespace testing {
-
-class MyTestServiceImpl : public TestServiceImpl {
- public:
-  Status Echo(ServerContext* context, const EchoRequest* request,
-              EchoResponse* response) override {
-    context->AddInitialMetadata("server-header-key", "server-header-value");
-    context->AddTrailingMetadata("server-trailer-key", "server-trailer-value");
-    return TestServiceImpl::Echo(context, request, response);
-  }
-};
 
 class TestLoggingSink : public grpc_core::LoggingSink {
  public:
@@ -113,6 +104,7 @@ class LoggingTest : public ::testing::Test {
  protected:
   static void SetUpTestSuite() {
     g_test_logging_sink = new TestLoggingSink;
+    grpc::RegisterOpenCensusPlugin();
     grpc_core::RegisterLoggingFilter(g_test_logging_sink);
   }
 
@@ -149,7 +141,7 @@ class LoggingTest : public ::testing::Test {
   void RunServerLoop() { server_->Wait(); }
 
   std::string server_address_;
-  MyTestServiceImpl service_;
+  CallbackTestServiceImpl service_;
   std::unique_ptr<grpc::Server> server_;
   std::thread server_thread_;
 

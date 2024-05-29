@@ -20,6 +20,8 @@
 
 #include <stddef.h>
 
+#include <memory>
+
 #include "absl/status/status.h"
 #include "gtest/gtest.h"
 
@@ -30,7 +32,7 @@
 
 #include "src/core/lib/gpr/useful.h"
 #include "src/core/lib/iomgr/exec_ctx.h"
-#include "test/core/util/test_config.h"
+#include "test/core/test_util/test_config.h"
 
 #define LOG_TEST(x) gpr_log(GPR_INFO, "%s", x)
 

@@ -12,21 +12,20 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include <grpc/support/port_platform.h>
-
 #include "src/core/lib/event_engine/posix_engine/tcp_socket_utils.h"
 
 #include <errno.h>
-#include <inttypes.h>
 #include <limits.h>
 
 #include "absl/cleanup/cleanup.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
-#include "absl/strings/string_view.h"
 #include "absl/types/optional.h"
 
 #include <grpc/event_engine/event_engine.h>
+#include <grpc/event_engine/memory_allocator.h>
+#include <grpc/impl/channel_arg_names.h>
+#include <grpc/support/port_platform.h>
 
 #include "src/core/lib/gpr/useful.h"
 #include "src/core/lib/gprpp/crash.h"  // IWYU pragma: keep
@@ -49,6 +48,7 @@
 #include <atomic>
 #include <cstring>
 
+#include "absl/log/check.h"
 #include "absl/status/status.h"
 
 #include <grpc/support/log.h>
@@ -58,8 +58,15 @@
 #include "src/core/lib/gprpp/strerror.h"
 
 #ifdef GRPC_HAVE_UNIX_SOCKET
+#ifdef GPR_WINDOWS
+// clang-format off
+#include <ws2def.h>
+#include <afunix.h>
+// clang-format on
+#else
 #include <sys/stat.h>  // IWYU pragma: keep
 #include <sys/un.h>
+#endif  // GPR_WINDOWS
 #endif
 
 namespace grpc_event_engine {
@@ -76,6 +83,7 @@ int AdjustValue(int default_value, int min_value, int max_value,
   return *actual_value;
 }
 
+#ifdef GRPC_POSIX_SOCKET_UTILS_COMMON
 // The default values for TCP_USER_TIMEOUT are currently configured to be in
 // line with the default values of KEEPALIVE_TIMEOUT as proposed in
 // https://github.com/grpc/proposal/blob/master/A18-tcp-user-timeout.md */
@@ -83,8 +91,6 @@ int kDefaultClientUserTimeoutMs = 20000;
 int kDefaultServerUserTimeoutMs = 20000;
 bool kDefaultClientUserTimeoutEnabled = false;
 bool kDefaultServerUserTimeoutEnabled = true;
-
-#ifdef GRPC_POSIX_SOCKET_UTILS_COMMON
 
 absl::Status ErrorForFd(
     int fd, const experimental::EventEngine::ResolvedAddress& addr) {
@@ -128,10 +134,11 @@ absl::Status PrepareTcpClientSocket(PosixSocketWrapper sock,
   if (options.tcp_receive_buffer_size != options.kReadBufferSizeUnset) {
     GRPC_RETURN_IF_ERROR(sock.SetSocketRcvBuf(options.tcp_receive_buffer_size));
   }
-  if (reinterpret_cast<const sockaddr*>(addr.address())->sa_family != AF_UNIX) {
-    // If its not a unix socket address.
+  if (addr.address()->sa_family != AF_UNIX && !ResolvedAddressIsVSock(addr)) {
+    // If its not a unix socket or vsock address.
     GRPC_RETURN_IF_ERROR(sock.SetSocketLowLatency(1));
     GRPC_RETURN_IF_ERROR(sock.SetSocketReuseAddr(1));
+    GRPC_RETURN_IF_ERROR(sock.SetSocketDscp(options.dscp));
     sock.TrySetSocketTcpUserTimeout(options, true);
   }
   GRPC_RETURN_IF_ERROR(sock.SetSocketNoSigpipeIfPossible());
@@ -184,6 +191,8 @@ PosixTcpOptions TcpOptionsFromEndpointConfig(const EndpointConfig& config) {
   options.expand_wildcard_addrs =
       (AdjustValue(0, 1, INT_MAX,
                    config.GetInt(GRPC_ARG_EXPAND_WILDCARD_ADDRS)) != 0);
+  options.dscp = AdjustValue(PosixTcpOptions::kDscpNotSet, 0, 63,
+                             config.GetInt(GRPC_ARG_DSCP));
   options.allow_reuse_port = PosixSocketWrapper::IsSocketReusePortSupported();
   auto allow_reuse_port_value = config.GetInt(GRPC_ARG_ALLOW_REUSEPORT);
   if (allow_reuse_port_value.has_value()) {
@@ -207,6 +216,13 @@ PosixTcpOptions TcpOptionsFromEndpointConfig(const EndpointConfig& config) {
   if (value != nullptr) {
     options.socket_mutator =
         grpc_socket_mutator_ref(static_cast<grpc_socket_mutator*>(value));
+  }
+  value =
+      config.GetVoidPointer(GRPC_ARG_EVENT_ENGINE_USE_MEMORY_ALLOCATOR_FACTORY);
+  if (value != nullptr) {
+    options.memory_allocator_factory =
+        static_cast<grpc_event_engine::experimental::MemoryAllocatorFactory*>(
+            value);
   }
   return options;
 }
@@ -519,6 +535,39 @@ absl::Status PosixSocketWrapper::SetSocketLowLatency(int low_latency) {
   return absl::OkStatus();
 }
 
+// Set Differentiated Services Code Point (DSCP)
+absl::Status PosixSocketWrapper::SetSocketDscp(int dscp) {
+  if (dscp == PosixTcpOptions::kDscpNotSet) {
+    return absl::OkStatus();
+  }
+  // The TOS/TrafficClass byte consists of following bits:
+  // | 7 6 5 4 3 2 | 1 0 |
+  // |    DSCP     | ECN |
+  int newval = dscp << 2;
+  int val;
+  socklen_t intlen = sizeof(val);
+  // Get ECN bits from current IP_TOS value unless IPv6 only
+  if (0 == getsockopt(fd_, IPPROTO_IP, IP_TOS, &val, &intlen)) {
+    newval |= (val & 0x3);
+    if (0 != setsockopt(fd_, IPPROTO_IP, IP_TOS, &newval, sizeof(newval))) {
+      return absl::Status(
+          absl::StatusCode::kInternal,
+          absl::StrCat("setsockopt(IP_TOS): ", grpc_core::StrError(errno)));
+    }
+  }
+  // Get ECN from current Traffic Class value if IPv6 is available
+  if (0 == getsockopt(fd_, IPPROTO_IPV6, IPV6_TCLASS, &val, &intlen)) {
+    newval |= (val & 0x3);
+    if (0 !=
+        setsockopt(fd_, IPPROTO_IPV6, IPV6_TCLASS, &newval, sizeof(newval))) {
+      return absl::Status(absl::StatusCode::kInternal,
+                          absl::StrCat("setsockopt(IPV6_TCLASS): ",
+                                       grpc_core::StrError(errno)));
+    }
+  }
+  return absl::OkStatus();
+}
+
 #if GPR_LINUX == 1
 // For Linux, it will be detected to support TCP_USER_TIMEOUT
 #ifndef TCP_USER_TIMEOUT
@@ -614,7 +663,7 @@ void PosixSocketWrapper::TrySetSocketTcpUserTimeout(
 // Set a socket using a grpc_socket_mutator
 absl::Status PosixSocketWrapper::SetSocketMutator(
     grpc_fd_usage usage, grpc_socket_mutator* mutator) {
-  GPR_ASSERT(mutator);
+  CHECK(mutator);
   if (!grpc_socket_mutator_mutate_fd(mutator, fd_, usage)) {
     return absl::Status(absl::StatusCode::kInternal,
                         "grpc_socket_mutator failed.");
@@ -712,7 +761,7 @@ absl::StatusOr<PosixSocketWrapper> PosixSocketWrapper::CreateDualStackSocket(
     }
     // If this isn't an IPv4 address, then return whatever we've got.
     if (!ResolvedAddressIsV4Mapped(addr, nullptr)) {
-      if (newfd <= 0) {
+      if (newfd < 0) {
         return ErrorForFd(newfd, addr);
       }
       dsmode = PosixSocketWrapper::DSMode::DSMODE_IPV6;
@@ -796,6 +845,10 @@ absl::Status PosixSocketWrapper::SetSocketLowLatency(int /*low_latency*/) {
 }
 
 absl::Status PosixSocketWrapper::SetSocketReusePort(int /*reuse*/) {
+  grpc_core::Crash("unimplemented");
+}
+
+absl::Status PosixSocketWrapper::SetSocketDscp(int /*dscp*/) {
   grpc_core::Crash("unimplemented");
 }
 

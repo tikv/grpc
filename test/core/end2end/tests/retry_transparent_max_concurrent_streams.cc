@@ -14,12 +14,16 @@
 // limitations under the License.
 //
 
+#include <memory>
+
 #include "absl/types/optional.h"
 #include "gtest/gtest.h"
 
 #include <grpc/grpc.h>
+#include <grpc/impl/channel_arg_names.h>
 #include <grpc/status.h>
 
+#include "src/core/ext/transport/chttp2/transport/internal.h"
 #include "src/core/lib/channel/channel_args.h"
 #include "src/core/lib/gprpp/time.h"
 #include "test/core/end2end/end2end_tests.h"
@@ -37,11 +41,13 @@ namespace {
 // will be transparently retried after the server starts up again.
 CORE_END2END_TEST(RetryHttp2Test, RetryTransparentMaxConcurrentStreams) {
   const auto server_args =
-      ChannelArgs().Set(GRPC_ARG_MAX_CONCURRENT_STREAMS, 1);
+      ChannelArgs()
+          .Set(GRPC_ARG_MAX_CONCURRENT_STREAMS, 1)
+          .Set(GRPC_ARG_MAX_CONCURRENT_STREAMS_OVERLOAD_PROTECTION, false);
   InitServer(server_args);
   InitClient(ChannelArgs());
   auto c =
-      NewClientCall("/service/method").Timeout(Duration::Seconds(5)).Create();
+      NewClientCall("/service/method").Timeout(Duration::Minutes(1)).Create();
   IncomingStatusOnClient server_status;
   IncomingMetadata server_initial_metadata;
   IncomingMessage server_message;
@@ -61,7 +67,7 @@ CORE_END2END_TEST(RetryHttp2Test, RetryTransparentMaxConcurrentStreams) {
   // We set wait_for_ready for this call, so that if it retries before
   // the server comes back up, it stays pending.
   auto c2 =
-      NewClientCall("/service/method").Timeout(Duration::Seconds(5)).Create();
+      NewClientCall("/service/method").Timeout(Duration::Minutes(1)).Create();
   IncomingStatusOnClient server_status2;
   IncomingMetadata server_initial_metadata2;
   IncomingMessage server_message2;
@@ -77,6 +83,8 @@ CORE_END2END_TEST(RetryHttp2Test, RetryTransparentMaxConcurrentStreams) {
   // Server handles the first call.
   IncomingMessage client_message;
   s.NewBatch(103).RecvMessage(client_message);
+  Expect(103, true);
+  Step();
   IncomingCloseOnServer client_close;
   s.NewBatch(104)
       .RecvCloseOnServer(client_close)
@@ -86,7 +94,6 @@ CORE_END2END_TEST(RetryHttp2Test, RetryTransparentMaxConcurrentStreams) {
   // Server completes first call and shutdown.
   // Client completes first call.
   Expect(104, true);
-  Expect(103, true);
   Expect(102, true);
   Expect(1, true);
   Step();
@@ -97,6 +104,8 @@ CORE_END2END_TEST(RetryHttp2Test, RetryTransparentMaxConcurrentStreams) {
   EXPECT_EQ(server_status.status(), GRPC_STATUS_OK);
   EXPECT_EQ(server_status.message(), "xyz");
   // Destroy server and then restart it.
+  // TODO(hork): hack to solve PosixEventEngine Listener's async shutdown issue.
+  absl::SleepFor(absl::Milliseconds(250));
   InitServer(server_args);
   // Server should get the second call.
   auto s2 = RequestCall(201);
@@ -110,6 +119,8 @@ CORE_END2END_TEST(RetryHttp2Test, RetryTransparentMaxConcurrentStreams) {
   IncomingMessage client_message2;
   IncomingCloseOnServer client_close2;
   s2.NewBatch(202).RecvMessage(client_message2);
+  Expect(202, true);
+  Step();
   s2.NewBatch(203)
       .RecvCloseOnServer(client_close2)
       .SendInitialMetadata({})
@@ -117,7 +128,6 @@ CORE_END2END_TEST(RetryHttp2Test, RetryTransparentMaxConcurrentStreams) {
       .SendStatusFromServer(GRPC_STATUS_OK, "xyz", {});
   // Second call completes.
   Expect(203, true);
-  Expect(202, true);
   Expect(2, true);
   Step();
   // Clean up from second call.

@@ -18,13 +18,12 @@
 
 #include "src/core/lib/transport/connectivity_state.h"
 
-#include "absl/strings/string_view.h"
 #include "gtest/gtest.h"
 
 #include <grpc/grpc.h>
 
-#include "test/core/util/test_config.h"
-#include "test/core/util/tracer_util.h"
+#include "test/core/test_util/test_config.h"
+#include "test/core/test_util/tracer_util.h"
 
 namespace grpc_core {
 namespace {

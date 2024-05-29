@@ -16,9 +16,11 @@
 //
 //
 
+#include <memory>
+
 #include "gtest/gtest.h"
 
-#include <grpc/grpc.h>
+#include <grpc/impl/channel_arg_names.h>
 #include <grpc/status.h>
 
 #include "src/core/lib/channel/channel_args.h"
@@ -45,7 +47,7 @@ static void BinaryMetadata(CoreEnd2endTest& test, bool server_true_binary,
   auto response_payload = RandomBinarySlice(9);
   auto status_string = RandomBinarySlice(256);
 
-  auto c = test.NewClientCall("/foo").Timeout(Duration::Seconds(5)).Create();
+  auto c = test.NewClientCall("/foo").Timeout(Duration::Minutes(1)).Create();
   CoreEnd2endTest::IncomingMetadata server_initial_md;
   CoreEnd2endTest::IncomingMessage server_message;
   CoreEnd2endTest::IncomingStatusOnClient server_status;
@@ -117,7 +119,6 @@ CORE_END2END_TEST(CoreEnd2endTest,
 
 CORE_END2END_TEST(CoreEnd2endTest,
                   BinaryMetadataServerHttp2FallbackClientHttp2Fallback) {
-  SKIP_IF_USES_EVENT_ENGINE_CLIENT();
   BinaryMetadata(*this, false, false);
 }
 

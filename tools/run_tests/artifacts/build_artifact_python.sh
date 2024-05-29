@@ -26,7 +26,9 @@ export AUDITWHEEL=${AUDITWHEEL:-auditwheel}
 source tools/internal_ci/helper_scripts/prepare_ccache_symlinks_rc
 
 # Needed for building binary distribution wheels -- bdist_wheel
-"${PYTHON}" -m pip install --upgrade wheel
+"${PYTHON}" -m pip install --upgrade pip
+# Ping to a single version to make sure we're building the same artifacts
+"${PYTHON}" -m pip install setuptools==69.5.1 wheel==0.43.0
 
 if [ "$GRPC_SKIP_PIP_CYTHON_UPGRADE" == "" ]
 then
@@ -37,7 +39,7 @@ then
   # Any installation step is a potential source of breakages,
   # so we are trying to perform as few download-and-install operations
   # as possible.
-  "${PYTHON}" -m pip install --upgrade cython
+  "${PYTHON}" -m pip install --upgrade 'cython<3.0.0rc1'
 fi
 
 # Allow build_ext to build C/C++ files in parallel
@@ -80,6 +82,22 @@ then
   # since we're crosscompiling, we need to explicitly choose the right platform for boringssl assembly optimizations
   export GRPC_BUILD_OVERRIDE_BORING_SSL_ASM_PLATFORM="linux-arm"
 fi
+
+ancillary_package_dir=(
+  "src/python/grpcio_admin/"
+  "src/python/grpcio_channelz/"
+  "src/python/grpcio_csds/"
+  "src/python/grpcio_health_checking/"
+  "src/python/grpcio_reflection/"
+  "src/python/grpcio_status/"
+  "src/python/grpcio_testing/"
+  "src/python/grpcio_observability/"
+)
+
+# Copy license to ancillary package directories so it will be distributed.
+for directory in "${ancillary_package_dir[@]}"; do
+  cp "LICENSE" "${directory}"
+done
 
 # Build the source distribution first because MANIFEST.in cannot override
 # exclusion of built shared objects among package resources (for some
@@ -131,6 +149,14 @@ ${SETARCH_CMD} "${PYTHON}" tools/distrib/python/grpcio_tools/setup.py sdist
 # shellcheck disable=SC2086
 ${SETARCH_CMD} "${PYTHON}" tools/distrib/python/grpcio_tools/setup.py bdist_wheel $WHEEL_PLAT_NAME_FLAG
 
+if [ "$GRPC_BUILD_MAC" == "" ]; then
+  "${PYTHON}" src/python/grpcio_observability/make_grpcio_observability.py
+  ${SETARCH_CMD} "${PYTHON}" src/python/grpcio_observability/setup.py sdist
+  # shellcheck disable=SC2086
+  ${SETARCH_CMD} "${PYTHON}" src/python/grpcio_observability/setup.py bdist_wheel $WHEEL_PLAT_NAME_FLAG
+fi
+
+
 # run twine check before auditwheel, because auditwheel puts the repaired wheels into
 # the artifacts output dir.
 if [ "$GRPC_SKIP_TWINE_CHECK" == "" ]
@@ -140,8 +166,11 @@ then
   "${PYTHON}" -m pip install virtualenv
   "${PYTHON}" -m virtualenv venv || { "${PYTHON}" -m pip install virtualenv==20.0.23 && "${PYTHON}" -m virtualenv venv; }
   # Ensure the generated artifacts are valid using "twine check"
-  venv/bin/python -m pip install "twine<=2.0"
+  venv/bin/python -m pip install "twine<=2.0" "readme_renderer<40.0"
   venv/bin/python -m twine check dist/* tools/distrib/python/grpcio_tools/dist/*
+  if [ "$GRPC_BUILD_MAC" == "" ]; then
+    venv/bin/python -m twine check src/python/grpcio_observability/dist/*
+  fi
   rm -rf venv/
 fi
 
@@ -167,9 +196,9 @@ fix_faulty_universal2_wheel() {
 }
 
 # This is necessary due to https://github.com/pypa/wheel/issues/406.
-# distutils incorrectly generates a universal2 artifact that only contains
+# wheel incorrectly generates a universal2 artifact that only contains
 # x86_64 libraries.
-if [ "$GRPC_UNIVERSAL2_REPAIR" != "" ]; then
+if [ "$GRPC_BUILD_MAC" != "" ]; then
   for WHEEL in dist/*.whl tools/distrib/python/grpcio_tools/dist/*.whl; do
     fix_faulty_universal2_wheel "$WHEEL"
   done
@@ -193,10 +222,25 @@ else
   cp -r tools/distrib/python/grpcio_tools/dist/*.whl "$ARTIFACT_DIR"
 fi
 
-# grpcio and grpcio-tools wheels have already been copied to artifact_dir
+# grpcio and grpcio-tools have already been copied to artifact_dir
 # by "auditwheel repair", now copy the .tar.gz source archives as well.
 cp -r dist/*.tar.gz "$ARTIFACT_DIR"
 cp -r tools/distrib/python/grpcio_tools/dist/*.tar.gz "$ARTIFACT_DIR"
+
+
+if [ "$GRPC_BUILD_MAC" == "" ]; then
+  if [ "$GRPC_RUN_AUDITWHEEL_REPAIR" != "" ]
+  then
+    for wheel in src/python/grpcio_observability/dist/*.whl; do
+      "${AUDITWHEEL}" show "$wheel" | tee /dev/stderr |  grep -E -w "$AUDITWHEEL_PLAT"
+      "${AUDITWHEEL}" repair "$wheel" --strip --wheel-dir "$ARTIFACT_DIR"
+      rm "$wheel"
+    done
+  else
+    cp -r src/python/grpcio_observability/dist/*.whl "$ARTIFACT_DIR"
+  fi
+  cp -r src/python/grpcio_observability/dist/*.tar.gz "$ARTIFACT_DIR"
+fi
 
 # We need to use the built grpcio-tools/grpcio to compile the health proto
 # Wheels are not supported by setup_requires/dependency_links, so we
@@ -218,6 +262,12 @@ then
   # demands an extra step of building the wheel. The building step is merely ran
   # through setup.py, but we can optimize it with "bdist_wheel" command, which
   # skips the wheel building step.
+
+  # Build xds_protos source distribution
+  # build.py is invoked as part of generate_projects.
+  ${SETARCH_CMD} "${PYTHON}" tools/distrib/python/xds_protos/setup.py \
+      sdist bdist_wheel install
+  cp -r tools/distrib/python/xds_protos/dist/* "$ARTIFACT_DIR"
 
   # Build grpcio_testing source distribution
   ${SETARCH_CMD} "${PYTHON}" src/python/grpcio_testing/setup.py preprocess \
@@ -244,6 +294,9 @@ then
       preprocess sdist bdist_wheel
   cp -r src/python/grpcio_status/dist/* "$ARTIFACT_DIR"
 
+  # Install xds-protos as a dependency of grpcio-csds
+  "${PYTHON}" -m pip install xds-protos --no-index --find-links "file://$ARTIFACT_DIR/"
+
   # Build grpcio_csds source distribution
   ${SETARCH_CMD} "${PYTHON}" src/python/grpcio_csds/setup.py \
       sdist bdist_wheel
@@ -251,10 +304,10 @@ then
 
   # Build grpcio_admin source distribution and it needs the cutting-edge version
   # of Channelz and CSDS to be installed.
-  "${PYTHON}" -m pip install --upgrade xds-protos==0.0.8
   "${PYTHON}" -m pip install grpcio-channelz --no-index --find-links "file://$ARTIFACT_DIR/"
   "${PYTHON}" -m pip install grpcio-csds --no-index --find-links "file://$ARTIFACT_DIR/"
   ${SETARCH_CMD} "${PYTHON}" src/python/grpcio_admin/setup.py \
       sdist bdist_wheel
   cp -r src/python/grpcio_admin/dist/* "$ARTIFACT_DIR"
+
 fi

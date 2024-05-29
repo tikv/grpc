@@ -17,8 +17,6 @@
 #ifndef GRPC_SRC_CPP_EXT_GCP_OBSERVABILITY_CONFIG_H
 #define GRPC_SRC_CPP_EXT_GCP_OBSERVABILITY_CONFIG_H
 
-#include <grpc/support/port_platform.h>
-
 #include <stdint.h>
 
 #include <map>
@@ -28,6 +26,8 @@
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/optional.h"
+
+#include <grpc/support/port_platform.h>
 
 #include "src/core/lib/gprpp/validation_errors.h"
 #include "src/core/lib/json/json.h"
@@ -84,7 +84,8 @@ struct GcpObservabilityConfig {
   };
 
   struct CloudTrace {
-    float sampling_rate = 0;
+    CloudTrace() : sampling_rate(0) {}
+    float sampling_rate;
 
     static const grpc_core::JsonLoaderInterface* JsonLoader(
         const grpc_core::JsonArgs&) {

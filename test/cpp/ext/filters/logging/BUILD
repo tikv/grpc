@@ -34,7 +34,7 @@ grpc_cc_library(
         "//src/core:logging_filter",
         "//src/cpp/ext/gcp:observability_logging_sink",
         "//src/proto/grpc/testing:echo_proto",
-        "//test/core/util:grpc_test_util",
+        "//test/core/test_util:grpc_test_util",
         "//test/cpp/end2end:test_service_impl",
         "//test/cpp/util:test_config",
         "//test/cpp/util:test_util",
@@ -51,6 +51,7 @@ grpc_cc_test(
     ],
     language = "C++",
     tags = [
+        "logging_test",
         "no_mac",  # TODO(yashykt): The default stack-sizes are not enough to run this test on MacOS
     ],
     deps = [
@@ -59,7 +60,7 @@ grpc_cc_test(
         "//src/core:logging_filter",
         "//src/cpp/ext/gcp:observability_logging_sink",
         "//src/proto/grpc/testing:echo_proto",
-        "//test/core/util:grpc_test_util",
+        "//test/core/test_util:grpc_test_util",
         "//test/cpp/end2end:test_service_impl",
         "//test/cpp/util:test_config",
         "//test/cpp/util:test_util",
@@ -76,6 +77,7 @@ grpc_cc_test(
     ],
     language = "C++",
     tags = [
+        "logging_test",
         "no_mac",  # TODO(yashykt): The default stack-sizes are not enough to run this test on MacOS
     ],
     deps = [
@@ -84,7 +86,7 @@ grpc_cc_test(
         "//src/core:logging_filter",
         "//src/cpp/ext/gcp:observability_logging_sink",
         "//src/proto/grpc/testing:echo_proto",
-        "//test/core/util:grpc_test_util",
+        "//test/core/test_util:grpc_test_util",
         "//test/cpp/end2end:test_service_impl",
         "//test/cpp/ext/filters/census:library",
         "//test/cpp/util:test_config",

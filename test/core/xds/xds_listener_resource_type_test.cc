@@ -14,7 +14,6 @@
 // limitations under the License.
 //
 
-#include <initializer_list>
 #include <map>
 #include <memory>
 #include <string>
@@ -34,17 +33,11 @@
 #include "absl/types/variant.h"
 #include "gmock/gmock.h"
 #include "gtest/gtest.h"
+#include "upb/mem/arena.hpp"
 #include "upb/reflection/def.hpp"
-#include "upb/upb.hpp"
 
 #include <grpc/grpc.h>
 
-#include "src/core/ext/xds/xds_bootstrap.h"
-#include "src/core/ext/xds/xds_bootstrap_grpc.h"
-#include "src/core/ext/xds/xds_client.h"
-#include "src/core/ext/xds/xds_common_types.h"
-#include "src/core/ext/xds/xds_listener.h"
-#include "src/core/ext/xds/xds_resource_type.h"
 #include "src/core/lib/address_utils/sockaddr_utils.h"
 #include "src/core/lib/debug/trace.h"
 #include "src/core/lib/gprpp/crash.h"
@@ -53,6 +46,12 @@
 #include "src/core/lib/iomgr/error.h"
 #include "src/core/lib/json/json.h"
 #include "src/core/lib/json/json_writer.h"
+#include "src/core/xds/grpc/xds_bootstrap_grpc.h"
+#include "src/core/xds/grpc/xds_common_types.h"
+#include "src/core/xds/grpc/xds_listener.h"
+#include "src/core/xds/xds_client/xds_bootstrap.h"
+#include "src/core/xds/xds_client/xds_client.h"
+#include "src/core/xds/xds_client/xds_resource_type.h"
 #include "src/proto/grpc/testing/xds/v3/address.pb.h"
 #include "src/proto/grpc/testing/xds/v3/base.pb.h"
 #include "src/proto/grpc/testing/xds/v3/config_source.pb.h"
@@ -65,7 +64,7 @@
 #include "src/proto/grpc/testing/xds/v3/string.pb.h"
 #include "src/proto/grpc/testing/xds/v3/tls.pb.h"
 #include "src/proto/grpc/testing/xds/v3/typed_struct.pb.h"
-#include "test/core/util/test_config.h"
+#include "test/core/test_util/test_config.h"
 
 using envoy::config::listener::v3::Listener;
 using envoy::extensions::filters::http::fault::v3::HTTPFault;
@@ -86,7 +85,8 @@ class XdsListenerTest : public ::testing::Test {
  protected:
   XdsListenerTest()
       : xds_client_(MakeXdsClient()),
-        decode_context_{xds_client_.get(), xds_client_->bootstrap().server(),
+        decode_context_{xds_client_.get(),
+                        *xds_client_->bootstrap().servers().front(),
                         &xds_listener_resource_type_test_trace,
                         upb_def_pool_.ptr(), upb_arena_.ptr()} {}
 
@@ -118,7 +118,8 @@ class XdsListenerTest : public ::testing::Test {
     }
     return MakeRefCounted<XdsClient>(std::move(*bootstrap),
                                      /*transport_factory=*/nullptr,
-                                     /*event_engine=*/nullptr, "foo agent",
+                                     /*event_engine=*/nullptr,
+                                     /*metrics_reporter=*/nullptr, "foo agent",
                                      "foo version");
   }
 
@@ -278,7 +279,8 @@ TEST_P(HttpConnectionManagerTest, MinimumValidConfig) {
   ASSERT_TRUE(decode_result.resource.ok()) << decode_result.resource.status();
   ASSERT_TRUE(decode_result.name.has_value());
   EXPECT_EQ(*decode_result.name, "foo");
-  auto& resource = static_cast<XdsListenerResource&>(**decode_result.resource);
+  auto& resource =
+      static_cast<const XdsListenerResource&>(**decode_result.resource);
   auto http_connection_manager = GetHCMConfig(resource);
   ASSERT_TRUE(http_connection_manager.has_value());
   auto* rds_name =
@@ -312,7 +314,8 @@ TEST_P(HttpConnectionManagerTest, RdsConfigSourceUsesAds) {
   ASSERT_TRUE(decode_result.resource.ok()) << decode_result.resource.status();
   ASSERT_TRUE(decode_result.name.has_value());
   EXPECT_EQ(*decode_result.name, "foo");
-  auto& resource = static_cast<XdsListenerResource&>(**decode_result.resource);
+  auto& resource =
+      static_cast<const XdsListenerResource&>(**decode_result.resource);
   auto http_connection_manager = GetHCMConfig(resource);
   ASSERT_TRUE(http_connection_manager.has_value());
   auto* rds_name =
@@ -425,7 +428,8 @@ TEST_P(HttpConnectionManagerTest, SetsMaxStreamDuration) {
   ASSERT_TRUE(decode_result.resource.ok()) << decode_result.resource.status();
   ASSERT_TRUE(decode_result.name.has_value());
   EXPECT_EQ(*decode_result.name, "foo");
-  auto& resource = static_cast<XdsListenerResource&>(**decode_result.resource);
+  auto& resource =
+      static_cast<const XdsListenerResource&>(**decode_result.resource);
   auto http_connection_manager = GetHCMConfig(resource);
   ASSERT_TRUE(http_connection_manager.has_value());
   auto* rds_name =
@@ -630,7 +634,8 @@ TEST_P(HttpConnectionManagerTest, HttpFilterTypeNotSupportedButOptional) {
   ASSERT_TRUE(decode_result.resource.ok()) << decode_result.resource.status();
   ASSERT_TRUE(decode_result.name.has_value());
   EXPECT_EQ(*decode_result.name, "foo");
-  auto& resource = static_cast<XdsListenerResource&>(**decode_result.resource);
+  auto& resource =
+      static_cast<const XdsListenerResource&>(**decode_result.resource);
   auto http_connection_manager = GetHCMConfig(resource);
   ASSERT_TRUE(http_connection_manager.has_value());
   ASSERT_EQ(http_connection_manager->http_filters.size(), 1UL);
@@ -767,7 +772,8 @@ TEST_F(HttpConnectionManagerClientOrServerOnlyTest,
   ASSERT_TRUE(decode_result.resource.ok()) << decode_result.resource.status();
   ASSERT_TRUE(decode_result.name.has_value());
   EXPECT_EQ(*decode_result.name, "foo");
-  auto& resource = static_cast<XdsListenerResource&>(**decode_result.resource);
+  auto& resource =
+      static_cast<const XdsListenerResource&>(**decode_result.resource);
   auto* api_listener = absl::get_if<XdsListenerResource::HttpConnectionManager>(
       &resource.listener);
   ASSERT_NE(api_listener, nullptr);
@@ -849,7 +855,8 @@ TEST_F(HttpConnectionManagerClientOrServerOnlyTest,
   ASSERT_TRUE(decode_result.resource.ok()) << decode_result.resource.status();
   ASSERT_TRUE(decode_result.name.has_value());
   EXPECT_EQ(*decode_result.name, "foo");
-  auto& resource = static_cast<XdsListenerResource&>(**decode_result.resource);
+  auto& resource =
+      static_cast<const XdsListenerResource&>(**decode_result.resource);
   auto* tcp_listener =
       absl::get_if<XdsListenerResource::TcpListener>(&resource.listener);
   ASSERT_NE(tcp_listener, nullptr);
@@ -959,7 +966,8 @@ TEST_F(TcpListenerTest, MinimumValidConfig) {
   ASSERT_TRUE(decode_result.resource.ok()) << decode_result.resource.status();
   ASSERT_TRUE(decode_result.name.has_value());
   EXPECT_EQ(*decode_result.name, "foo");
-  auto& resource = static_cast<XdsListenerResource&>(**decode_result.resource);
+  auto& resource =
+      static_cast<const XdsListenerResource&>(**decode_result.resource);
   auto* tcp_listener =
       absl::get_if<XdsListenerResource::TcpListener>(&resource.listener);
   ASSERT_NE(tcp_listener, nullptr);
@@ -1018,7 +1026,8 @@ TEST_F(TcpListenerTest, FilterChainMatchCriteria) {
   ASSERT_TRUE(decode_result.resource.ok()) << decode_result.resource.status();
   ASSERT_TRUE(decode_result.name.has_value());
   EXPECT_EQ(*decode_result.name, "foo");
-  auto& resource = static_cast<XdsListenerResource&>(**decode_result.resource);
+  auto& resource =
+      static_cast<const XdsListenerResource&>(**decode_result.resource);
   auto* tcp_listener =
       absl::get_if<XdsListenerResource::TcpListener>(&resource.listener);
   ASSERT_NE(tcp_listener, nullptr);
@@ -1479,7 +1488,8 @@ TEST_F(TcpListenerTest, DownstreamTlsContext) {
   ASSERT_TRUE(decode_result.resource.ok()) << decode_result.resource.status();
   ASSERT_TRUE(decode_result.name.has_value());
   EXPECT_EQ(*decode_result.name, "foo");
-  auto& resource = static_cast<XdsListenerResource&>(**decode_result.resource);
+  auto& resource =
+      static_cast<const XdsListenerResource&>(**decode_result.resource);
   auto* tcp_listener =
       absl::get_if<XdsListenerResource::TcpListener>(&resource.listener);
   ASSERT_NE(tcp_listener, nullptr);
@@ -1535,7 +1545,8 @@ TEST_F(TcpListenerTest, DownstreamTlsContextWithCaCertProviderInstance) {
   ASSERT_TRUE(decode_result.resource.ok()) << decode_result.resource.status();
   ASSERT_TRUE(decode_result.name.has_value());
   EXPECT_EQ(*decode_result.name, "foo");
-  auto& resource = static_cast<XdsListenerResource&>(**decode_result.resource);
+  auto& resource =
+      static_cast<const XdsListenerResource&>(**decode_result.resource);
   auto* tcp_listener =
       absl::get_if<XdsListenerResource::TcpListener>(&resource.listener);
   ASSERT_NE(tcp_listener, nullptr);
@@ -1595,7 +1606,8 @@ TEST_F(TcpListenerTest, ClientCertificateRequired) {
   ASSERT_TRUE(decode_result.resource.ok()) << decode_result.resource.status();
   ASSERT_TRUE(decode_result.name.has_value());
   EXPECT_EQ(*decode_result.name, "foo");
-  auto& resource = static_cast<XdsListenerResource&>(**decode_result.resource);
+  auto& resource =
+      static_cast<const XdsListenerResource&>(**decode_result.resource);
   auto* tcp_listener =
       absl::get_if<XdsListenerResource::TcpListener>(&resource.listener);
   ASSERT_NE(tcp_listener, nullptr);

@@ -19,10 +19,12 @@
 #include <stdio.h>
 #include <stdlib.h>
 
+#include <limits>
 #include <memory>
 #include <string>
 
 #include "absl/cleanup/cleanup.h"
+#include "absl/random/bit_gen_ref.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
@@ -42,13 +44,18 @@
 #include "src/core/lib/resource_quota/resource_quota.h"
 #include "src/core/lib/slice/slice.h"
 #include "src/core/lib/transport/metadata_batch.h"
-#include "test/core/util/slice_splitter.h"
+#include "test/core/test_util/slice_splitter.h"
 
 bool squelch = true;
 bool leak_check = true;
 
 namespace grpc_core {
 namespace {
+
+struct DeterministicBitGen : public std::numeric_limits<uint64_t> {
+  using result_type = uint64_t;
+  uint64_t operator()() { return 42; }
+};
 
 class TestEncoder {
  public:
@@ -83,7 +90,7 @@ absl::StatusOr<std::string> TestVector(grpc_slice_split_mode mode,
   size_t nslices;
   size_t i;
 
-  grpc_metadata_batch b(arena.get());
+  grpc_metadata_batch b;
 
   HPackParser parser;
   parser.BeginFrame(
@@ -102,7 +109,10 @@ absl::StatusOr<std::string> TestVector(grpc_slice_split_mode mode,
   absl::Status found_err;
   for (i = 0; i < nslices; i++) {
     ExecCtx exec_ctx;
-    auto err = parser.Parse(slices[i], i == nslices - 1);
+    DeterministicBitGen bitgen;
+    auto err =
+        parser.Parse(slices[i], i == nslices - 1, absl::BitGenRef(bitgen),
+                     /*call_tracer=*/nullptr);
     if (!err.ok()) {
       if (!IsStreamError(err)) return err;
       if (found_err.ok()) found_err = err;

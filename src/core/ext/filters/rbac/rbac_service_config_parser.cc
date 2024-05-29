@@ -203,7 +203,7 @@ struct RbacConfig {
                           ValidationErrors* errors);
       };
 
-      int action;
+      int action = static_cast<int>(Rbac::Action::kDeny);
       std::map<std::string, Policy> policies;
       // Defaults to kNone since its json field is optional.
       Rbac::AuditCondition audit_condition = Rbac::AuditCondition::kNone;
@@ -215,12 +215,11 @@ struct RbacConfig {
       Rules(Rules&&) = default;
       Rules& operator=(Rules&&) = default;
 
-      Rbac TakeAsRbac(std::string name);
+      Rbac TakeAsRbac();
       static const JsonLoaderInterface* JsonLoader(const JsonArgs&);
       void JsonPostLoad(const Json&, const JsonArgs&, ValidationErrors* errors);
     };
 
-    std::string name;
     absl::optional<Rules> rules;
 
     Rbac TakeAsRbac();
@@ -773,9 +772,8 @@ void RbacConfig::RbacPolicy::Rules::AuditLogger::JsonPostLoad(
 // RbacConfig::RbacPolicy::Rules
 //
 
-Rbac RbacConfig::RbacPolicy::Rules::TakeAsRbac(std::string name) {
+Rbac RbacConfig::RbacPolicy::Rules::TakeAsRbac() {
   Rbac rbac;
-  rbac.name = std::move(name);
   rbac.action = static_cast<Rbac::Action>(action);
   rbac.audit_condition = audit_condition;
   for (auto& p : policies) {
@@ -803,7 +801,7 @@ void RbacConfig::RbacPolicy::Rules::JsonPostLoad(const Json& json,
   if (rbac_action != Rbac::Action::kAllow &&
       rbac_action != Rbac::Action::kDeny) {
     ValidationErrors::ScopedField field(errors, ".action");
-    errors->AddError("unknown action");
+    errors->AddError(absl::StrCat("unknown action ", rbac_action));
   }
   // Parse and validate audit_condition field.
   auto condition = LoadJsonObjectField<int>(json.object(), args,
@@ -849,15 +847,14 @@ Rbac RbacConfig::RbacPolicy::TakeAsRbac() {
   if (!rules.has_value()) {
     // No enforcing to be applied. An empty deny policy with an empty map
     // is equivalent to no enforcing.
-    return Rbac(std::move(name), Rbac::Action::kDeny, {});
+    return Rbac("", Rbac::Action::kDeny, {});
   }
-  return rules->TakeAsRbac(std::move(name));
+  return rules->TakeAsRbac();
 }
 
 const JsonLoaderInterface* RbacConfig::RbacPolicy::JsonLoader(const JsonArgs&) {
   static const auto* loader = JsonObjectLoader<RbacPolicy>()
                                   .OptionalField("rules", &RbacPolicy::rules)
-                                  .Field("filter_name", &RbacPolicy::name)
                                   .Finish();
   return loader;
 }

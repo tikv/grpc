@@ -14,12 +14,8 @@
 // limitations under the License.
 //
 
-#include "src/core/ext/xds/xds_http_filters.h"
+#include "src/core/xds/grpc/xds_http_filters.h"
 
-#include <stdint.h>
-
-#include <algorithm>
-#include <initializer_list>
 #include <string>
 #include <utility>
 #include <vector>
@@ -28,13 +24,14 @@
 #include <google/protobuf/duration.pb.h>
 #include <google/protobuf/wrappers.pb.h>
 
+#include "absl/log/check.h"
 #include "absl/status/status.h"
 #include "absl/strings/str_format.h"
 #include "absl/strings/strip.h"
 #include "absl/types/variant.h"
 #include "gtest/gtest.h"
+#include "upb/mem/arena.hpp"
 #include "upb/reflection/def.hpp"
-#include "upb/upb.hpp"
 
 #include <grpc/grpc.h>
 #include <grpc/status.h>
@@ -48,13 +45,12 @@
 #include "src/core/ext/filters/rbac/rbac_service_config_parser.h"
 #include "src/core/ext/filters/stateful_session/stateful_session_filter.h"
 #include "src/core/ext/filters/stateful_session/stateful_session_service_config_parser.h"
-#include "src/core/ext/xds/xds_bootstrap_grpc.h"
-#include "src/core/ext/xds/xds_client.h"
 #include "src/core/lib/gprpp/crash.h"
-#include "src/core/lib/gprpp/env.h"
 #include "src/core/lib/gprpp/ref_counted_ptr.h"
 #include "src/core/lib/iomgr/error.h"
 #include "src/core/lib/json/json_writer.h"
+#include "src/core/xds/grpc/xds_bootstrap_grpc.h"
+#include "src/core/xds/xds_client/xds_client.h"
 #include "src/proto/grpc/testing/xds/v3/address.pb.h"
 #include "src/proto/grpc/testing/xds/v3/cookie.pb.h"
 #include "src/proto/grpc/testing/xds/v3/extension.pb.h"
@@ -73,8 +69,8 @@
 #include "src/proto/grpc/testing/xds/v3/stateful_session_cookie.pb.h"
 #include "src/proto/grpc/testing/xds/v3/string.pb.h"
 #include "src/proto/grpc/testing/xds/v3/typed_struct.pb.h"
-#include "test/core/util/scoped_env_var.h"
-#include "test/core/util/test_config.h"
+#include "test/core/test_util/scoped_env_var.h"
+#include "test/core/test_util/test_config.h"
 
 // IWYU pragma: no_include <google/protobuf/message.h>
 
@@ -122,7 +118,8 @@ class XdsHttpFilterTest : public ::testing::Test {
     }
     return MakeRefCounted<XdsClient>(std::move(*bootstrap),
                                      /*transport_factory=*/nullptr,
-                                     /*event_engine=*/nullptr, "foo agent",
+                                     /*event_engine=*/nullptr,
+                                     /*metrics_reporter=*/nullptr, "foo agent",
                                      "foo version");
   }
 
@@ -195,7 +192,7 @@ class XdsRouterFilterTest : public XdsHttpFilterTest {
   XdsRouterFilterTest() {
     XdsExtension extension = MakeXdsExtension(Router());
     filter_ = GetFilter(extension.type);
-    GPR_ASSERT(filter_ != nullptr);
+    CHECK_NE(filter_, nullptr);
   }
 
   const XdsHttpFilterImpl* filter_;
@@ -279,7 +276,7 @@ class XdsFaultInjectionFilterTest : public XdsHttpFilterTest {
   XdsFaultInjectionFilterTest() {
     XdsExtension extension = MakeXdsExtension(HTTPFault());
     filter_ = GetFilter(extension.type);
-    GPR_ASSERT(filter_ != nullptr);
+    CHECK_NE(filter_, nullptr);
   }
 
   const XdsHttpFilterImpl* filter_;
@@ -305,8 +302,7 @@ TEST_F(XdsFaultInjectionFilterTest, ModifyChannelArgs) {
 TEST_F(XdsFaultInjectionFilterTest, GenerateServiceConfigTopLevelConfig) {
   XdsHttpFilterImpl::FilterConfig config;
   config.config = Json::FromObject({{"foo", Json::FromString("bar")}});
-  auto service_config =
-      filter_->GenerateServiceConfig(config, nullptr, /*filter_name=*/"");
+  auto service_config = filter_->GenerateServiceConfig(config, nullptr);
   ASSERT_TRUE(service_config.ok()) << service_config.status();
   EXPECT_EQ(service_config->service_config_field_name, "faultInjectionPolicy");
   EXPECT_EQ(service_config->element, "{\"foo\":\"bar\"}");
@@ -318,8 +314,8 @@ TEST_F(XdsFaultInjectionFilterTest, GenerateServiceConfigOverrideConfig) {
   XdsHttpFilterImpl::FilterConfig override_config;
   override_config.config =
       Json::FromObject({{"baz", Json::FromString("quux")}});
-  auto service_config = filter_->GenerateServiceConfig(
-      top_config, &override_config, /*filter_name=*/"");
+  auto service_config =
+      filter_->GenerateServiceConfig(top_config, &override_config);
   ASSERT_TRUE(service_config.ok()) << service_config.status();
   EXPECT_EQ(service_config->service_config_field_name, "faultInjectionPolicy");
   EXPECT_EQ(service_config->element, "{\"baz\":\"quux\"}");
@@ -485,7 +481,7 @@ class XdsRbacFilterTest : public XdsHttpFilterTest {
   XdsRbacFilterTest() {
     XdsExtension extension = MakeXdsExtension(RBAC());
     filter_ = GetFilter(extension.type);
-    GPR_ASSERT(filter_ != nullptr);
+    CHECK_NE(filter_, nullptr);
   }
 
   const XdsHttpFilterImpl* filter_;
@@ -599,13 +595,11 @@ TEST_F(XdsRbacFilterTest, GenerateServiceConfig) {
   XdsHttpFilterImpl::FilterConfig hcm_config = {
       filter_->ConfigProtoName(),
       Json::FromObject({{"name", Json::FromString("foo")}})};
-  auto config = filter_->GenerateServiceConfig(hcm_config, nullptr, "rbac");
+  auto config = filter_->GenerateServiceConfig(hcm_config, nullptr);
   ASSERT_TRUE(config.ok()) << config.status();
   EXPECT_EQ(config->service_config_field_name, "rbacPolicy");
-  EXPECT_EQ(
-      config->element,
-      JsonDump(Json::FromObject({{"name", Json::FromString("foo")},
-                                 {"filter_name", Json::FromString("rbac")}})));
+  EXPECT_EQ(config->element,
+            JsonDump(Json::FromObject({{"name", Json::FromString("foo")}})));
 }
 
 // For the RBAC filter, the override config is a superset of the
@@ -1108,25 +1102,13 @@ TEST_P(XdsRbacFilterConfigTest, InvalidPermissionAndPrincipal) {
 // StatefulSession filter tests
 //
 
-using XdsStatefulSessionFilterDisabledTest = XdsHttpFilterTest;
-
-TEST_F(XdsStatefulSessionFilterDisabledTest, FilterNotRegistered) {
-  XdsExtension extension = MakeXdsExtension(StatefulSession());
-  EXPECT_EQ(GetFilter(extension.type), nullptr);
-}
-
 class XdsStatefulSessionFilterTest : public XdsHttpFilterTest {
  protected:
   void SetUp() override {
-    SetEnv("GRPC_EXPERIMENTAL_XDS_ENABLE_OVERRIDE_HOST", "true");
     registry_ = XdsHttpFilterRegistry();
     XdsExtension extension = MakeXdsExtension(StatefulSession());
     filter_ = GetFilter(extension.type);
-    GPR_ASSERT(filter_ != nullptr);
-  }
-
-  void TearDown() override {
-    UnsetEnv("GRPC_EXPERIMENTAL_XDS_ENABLE_OVERRIDE_HOST");
+    CHECK_NE(filter_, nullptr);
   }
 
   const XdsHttpFilterImpl* filter_;
@@ -1169,8 +1151,7 @@ TEST_F(XdsStatefulSessionFilterTest, GenerateServiceConfigNoOverride) {
   XdsHttpFilterImpl::FilterConfig hcm_config = {
       filter_->ConfigProtoName(),
       Json::FromObject({{"name", Json::FromString("foo")}})};
-  auto config =
-      filter_->GenerateServiceConfig(hcm_config, nullptr, /*filter_name=*/"");
+  auto config = filter_->GenerateServiceConfig(hcm_config, nullptr);
   ASSERT_TRUE(config.ok()) << config.status();
   EXPECT_EQ(config->service_config_field_name, "stateful_session");
   EXPECT_EQ(config->element,
@@ -1184,8 +1165,7 @@ TEST_F(XdsStatefulSessionFilterTest, GenerateServiceConfigWithOverride) {
   XdsHttpFilterImpl::FilterConfig override_config = {
       filter_->OverrideConfigProtoName(),
       Json::FromObject({{"name", Json::FromString("bar")}})};
-  auto config = filter_->GenerateServiceConfig(hcm_config, &override_config,
-                                               /*filter_name=*/"");
+  auto config = filter_->GenerateServiceConfig(hcm_config, &override_config);
   ASSERT_TRUE(config.ok()) << config.status();
   EXPECT_EQ(config->service_config_field_name, "stateful_session");
   EXPECT_EQ(config->element,
@@ -1338,14 +1318,13 @@ TEST_P(XdsStatefulSessionFilterConfigTest, PathAndTtl) {
 
 TEST_P(XdsStatefulSessionFilterConfigTest, SessionStateUnset) {
   auto config = GenerateConfig(StatefulSession());
-  absl::Status status = errors_.status(absl::StatusCode::kInvalidArgument,
-                                       "errors validating filter config");
-  ASSERT_EQ(status.code(), absl::StatusCode::kInvalidArgument);
-  EXPECT_EQ(
-      status.message(),
-      absl::StrCat("errors validating filter config: [field:", FieldPrefix(),
-                   ".session_state error:field not present]"))
-      << status;
+  ASSERT_TRUE(errors_.ok()) << errors_.status(
+      absl::StatusCode::kInvalidArgument, "unexpected errors");
+  ASSERT_TRUE(config.has_value());
+  EXPECT_EQ(config->config_proto_type_name,
+            GetParam() ? filter_->OverrideConfigProtoName()
+                       : filter_->ConfigProtoName());
+  EXPECT_EQ(config->config, Json::FromObject({})) << JsonDump(config->config);
 }
 
 TEST_P(XdsStatefulSessionFilterConfigTest, CookieNotPresent) {

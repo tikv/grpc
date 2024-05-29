@@ -1,44 +1,39 @@
-/*
- * Copyright (c) 2009-2021, Google LLC
- * All rights reserved.
- *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *     * Redistributions of source code must retain the above copyright
- *       notice, this list of conditions and the following disclaimer.
- *     * Redistributions in binary form must reproduce the above copyright
- *       notice, this list of conditions and the following disclaimer in the
- *       documentation and/or other materials provided with the distribution.
- *     * Neither the name of Google LLC nor the
- *       names of its contributors may be used to endorse or promote products
- *       derived from this software without specific prior written permission.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
- * ARE DISCLAIMED. IN NO EVENT SHALL Google LLC BE LIABLE FOR ANY DIRECT,
- * INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
- * (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
- * LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND
- * ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
- * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
- * SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- */
+// Protocol Buffers - Google's data interchange format
+// Copyright 2023 Google LLC.  All rights reserved.
+//
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file or at
+// https://developers.google.com/open-source/licenses/bsd
 
+#include <cstddef>
+#include <cstdint>
 #include <string>
 #include <string_view>
+#include <vector>
 
-#include "gmock/gmock.h"
-#include "gtest/gtest.h"
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
 #include "google/protobuf/test_messages_proto3.upb.h"
+#include "upb/base/status.hpp"
+#include "upb/base/string_view.h"
+#include "upb/base/upcast.h"
 #include "upb/json/decode.h"
 #include "upb/json/encode.h"
+#include "upb/mem/arena.h"
+#include "upb/mem/arena.hpp"
+#include "upb/message/message.h"
 #include "upb/message/test.upb.h"
+#include "upb/message/test.upb_minitable.h"
 #include "upb/message/test.upbdefs.h"
+#include "upb/message/value.h"
+#include "upb/mini_table/extension_registry.h"
+#include "upb/mini_table/message.h"
+#include "upb/reflection/def.h"
 #include "upb/reflection/def.hpp"
+#include "upb/reflection/message.h"
 #include "upb/test/fuzz_util.h"
-#include "upb/upb.hpp"
 #include "upb/wire/decode.h"
+#include "upb/wire/encode.h"
 
 // begin:google_only
 // #include "testing/fuzzing/fuzztest.h"
@@ -78,8 +73,9 @@ TEST(MessageTest, Extensions) {
   }
   )json";
   upb::Status status;
-  EXPECT_TRUE(upb_JsonDecode(json.data(), json.size(), ext_msg, m.ptr(),
-                             defpool.ptr(), 0, arena.ptr(), status.ptr()))
+  EXPECT_TRUE(upb_JsonDecode(json.data(), json.size(), UPB_UPCAST(ext_msg),
+                             m.ptr(), defpool.ptr(), 0, arena.ptr(),
+                             status.ptr()))
       << status.error_message();
 
   VerifyMessage(ext_msg);
@@ -97,14 +93,14 @@ TEST(MessageTest, Extensions) {
   VerifyMessage(ext_msg2);
 
   // Test round-trip through JSON format.
-  size_t json_size = upb_JsonEncode(ext_msg, m.ptr(), defpool.ptr(), 0, nullptr,
-                                    0, status.ptr());
+  size_t json_size = upb_JsonEncode(UPB_UPCAST(ext_msg), m.ptr(), defpool.ptr(),
+                                    0, nullptr, 0, status.ptr());
   char* json_buf =
       static_cast<char*>(upb_Arena_Malloc(arena.ptr(), json_size + 1));
-  upb_JsonEncode(ext_msg, m.ptr(), defpool.ptr(), 0, json_buf, json_size + 1,
-                 status.ptr());
+  upb_JsonEncode(UPB_UPCAST(ext_msg), m.ptr(), defpool.ptr(), 0, json_buf,
+                 json_size + 1, status.ptr());
   upb_test_TestExtensions* ext_msg3 = upb_test_TestExtensions_new(arena.ptr());
-  EXPECT_TRUE(upb_JsonDecode(json_buf, json_size, ext_msg3, m.ptr(),
+  EXPECT_TRUE(upb_JsonDecode(json_buf, json_size, UPB_UPCAST(ext_msg3), m.ptr(),
                              defpool.ptr(), 0, arena.ptr(), status.ptr()))
       << status.error_message();
   VerifyMessage(ext_msg3);
@@ -138,8 +134,9 @@ TEST(MessageTest, MessageSet) {
   }
   )json";
   upb::Status status;
-  EXPECT_TRUE(upb_JsonDecode(json.data(), json.size(), ext_msg, m.ptr(),
-                             defpool.ptr(), 0, arena.ptr(), status.ptr()))
+  EXPECT_TRUE(upb_JsonDecode(json.data(), json.size(), UPB_UPCAST(ext_msg),
+                             m.ptr(), defpool.ptr(), 0, arena.ptr(),
+                             status.ptr()))
       << status.error_message();
 
   VerifyMessageSet(ext_msg);
@@ -157,14 +154,14 @@ TEST(MessageTest, MessageSet) {
   VerifyMessageSet(ext_msg2);
 
   // Test round-trip through JSON format.
-  size_t json_size = upb_JsonEncode(ext_msg, m.ptr(), defpool.ptr(), 0, nullptr,
-                                    0, status.ptr());
+  size_t json_size = upb_JsonEncode(UPB_UPCAST(ext_msg), m.ptr(), defpool.ptr(),
+                                    0, nullptr, 0, status.ptr());
   char* json_buf =
       static_cast<char*>(upb_Arena_Malloc(arena.ptr(), json_size + 1));
-  upb_JsonEncode(ext_msg, m.ptr(), defpool.ptr(), 0, json_buf, json_size + 1,
-                 status.ptr());
+  upb_JsonEncode(UPB_UPCAST(ext_msg), m.ptr(), defpool.ptr(), 0, json_buf,
+                 json_size + 1, status.ptr());
   upb_test_TestMessageSet* ext_msg3 = upb_test_TestMessageSet_new(arena.ptr());
-  EXPECT_TRUE(upb_JsonDecode(json_buf, json_size, ext_msg3, m.ptr(),
+  EXPECT_TRUE(upb_JsonDecode(json_buf, json_size, UPB_UPCAST(ext_msg3), m.ptr(),
                              defpool.ptr(), 0, arena.ptr(), status.ptr()))
       << status.error_message();
   VerifyMessageSet(ext_msg3);
@@ -317,10 +314,10 @@ TEST(MessageTest, DecodeRequiredFieldsTopLevelMessage) {
   EXPECT_NE(nullptr, test_msg);
 
   // Fails, because required fields are missing.
-  EXPECT_EQ(
-      kUpb_DecodeStatus_MissingRequired,
-      upb_Decode(nullptr, 0, test_msg, &upb_test_TestRequiredFields_msg_init,
-                 nullptr, kUpb_DecodeOption_CheckRequired, arena.ptr()));
+  EXPECT_EQ(kUpb_DecodeStatus_MissingRequired,
+            upb_Decode(nullptr, 0, UPB_UPCAST(test_msg),
+                       &upb_0test__TestRequiredFields_msg_init, nullptr,
+                       kUpb_DecodeOption_CheckRequired, arena.ptr()));
 
   upb_test_TestRequiredFields_set_required_int32(test_msg, 1);
   size_t size;
@@ -332,8 +329,8 @@ TEST(MessageTest, DecodeRequiredFieldsTopLevelMessage) {
   // Fails, but the code path is slightly different because the serialized
   // payload is not empty.
   EXPECT_EQ(kUpb_DecodeStatus_MissingRequired,
-            upb_Decode(serialized, size, test_msg,
-                       &upb_test_TestRequiredFields_msg_init, nullptr,
+            upb_Decode(serialized, size, UPB_UPCAST(test_msg),
+                       &upb_0test__TestRequiredFields_msg_init, nullptr,
                        kUpb_DecodeOption_CheckRequired, arena.ptr()));
 
   empty_msg = upb_test_EmptyMessage_new(arena.ptr());
@@ -342,10 +339,10 @@ TEST(MessageTest, DecodeRequiredFieldsTopLevelMessage) {
   upb_test_TestRequiredFields_set_required_message(test_msg, empty_msg);
 
   // Succeeds, because required fields are present (though not in the input).
-  EXPECT_EQ(
-      kUpb_DecodeStatus_Ok,
-      upb_Decode(nullptr, 0, test_msg, &upb_test_TestRequiredFields_msg_init,
-                 nullptr, kUpb_DecodeOption_CheckRequired, arena.ptr()));
+  EXPECT_EQ(kUpb_DecodeStatus_Ok,
+            upb_Decode(nullptr, 0, UPB_UPCAST(test_msg),
+                       &upb_0test__TestRequiredFields_msg_init, nullptr,
+                       kUpb_DecodeOption_CheckRequired, arena.ptr()));
 
   // Serialize a complete payload.
   serialized =
@@ -362,8 +359,8 @@ TEST(MessageTest, DecodeRequiredFieldsTopLevelMessage) {
   upb_test_TestRequiredFields_set_optional_message(
       test_msg2, upb_test_TestRequiredFields_new(arena.ptr()));
   EXPECT_EQ(kUpb_DecodeStatus_Ok,
-            upb_Decode(serialized, size, test_msg2,
-                       &upb_test_TestRequiredFields_msg_init, nullptr,
+            upb_Decode(serialized, size, UPB_UPCAST(test_msg2),
+                       &upb_0test__TestRequiredFields_msg_init, nullptr,
                        kUpb_DecodeOption_CheckRequired, arena.ptr()));
 }
 
@@ -456,7 +453,7 @@ TEST(MessageTest, MaxRequiredFields) {
   for (int i = 1; i <= 61; i++) {
     upb::FieldDefPtr f = m.FindFieldByNumber(i);
     ASSERT_TRUE(f);
-    upb_Message_SetFieldByDef(test_msg, f.ptr(), val, arena.ptr());
+    upb_Message_SetFieldByDef(UPB_UPCAST(test_msg), f.ptr(), val, arena.ptr());
   }
 
   // Fails, field 63 still isn't set.
@@ -467,7 +464,7 @@ TEST(MessageTest, MaxRequiredFields) {
   // Succeeds, all required fields are set.
   upb::FieldDefPtr f = m.FindFieldByNumber(62);
   ASSERT_TRUE(f);
-  upb_Message_SetFieldByDef(test_msg, f.ptr(), val, arena.ptr());
+  upb_Message_SetFieldByDef(UPB_UPCAST(test_msg), f.ptr(), val, arena.ptr());
   serialized = upb_test_TestMaxRequiredFields_serialize_ex(
       test_msg, kUpb_EncodeOption_CheckRequired, arena.ptr(), &size);
   ASSERT_TRUE(serialized != nullptr);
@@ -507,6 +504,10 @@ TEST(MessageTest, MapField) {
 // static void DecodeEncodeArbitrarySchemaAndPayload(
 //     const upb::fuzz::MiniTableFuzzInput& input, std::string_view proto_payload,
 //     int decode_options, int encode_options) {
+// // Lexan does not have setenv
+// #ifndef _MSC_VER
+//   setenv("FUZZTEST_STACK_LIMIT", "262144", 1);
+// #endif
 //   // The value of 80 used here is empirical and intended to roughly represent
 //   // the tiny 64K stack size used by the test framework. We still see the
 //   // occasional stack overflow at 90, so far 80 has worked 100% of the time.
@@ -663,6 +664,16 @@ TEST(MessageTest, MapField) {
 //
 // TEST(FuzzTest, MapFieldVerify) {
 //   DecodeEncodeArbitrarySchemaAndPayload({{"%  ^!"}, {}, "", {}}, "", 0, 0);
+// }
+//
+// TEST(FuzzTest, TooManyRequiredFields) {
+//   DecodeEncodeArbitrarySchemaAndPayload(
+//       {{"$ N N N N N N N N N N N N N N N N N N N N N N N N N N N N N N N N N N "
+//         "N N N N N N N N N N N N N N N N N N N N N N N N N N N N N N N"},
+//        {},
+//        "",
+//        {}},
+//       "", 0, 4);
 // }
 //
 // end:google_only
